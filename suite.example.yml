@@ -1,0 +1,59 @@
+suite: invoice_extraction
+version: 3
+
+providers:
+  cheap_verifier:
+    plugin: openai            # pip install llmex-openai registers this
+    model: gpt-4.1-mini
+    max_concurrency: 20
+  local:
+    plugin: vllm
+    endpoint: http://gpu-01:8000
+    model: qwen3-32b
+
+strategies:
+  ensemble:
+    plugin: diverse_ensemble
+    n_calls: 5
+    timeout_s: 20
+
+budget:
+  max_usd: 40
+  max_calls: 20000
+
+aggregate:
+  field_to_document: weighted_harmonic
+  field_weights:
+    total_amount: 3.0
+    currency: 0.5
+
+expectations:
+  # tier 1 - deterministic, 100% coverage, free
+  - type: expect_field_grounded_in_source
+    fields: ["vendor", "invoice_date", "total_amount"]
+    min_ratio: 0.92
+    severity: error
+
+  - type: expect_field_type
+    types: {vendor: string, total_amount: string}
+    nullable: ["vendor"]
+    severity: error
+
+  # tier 2 - cross field consistency
+  - type: expect_fields_to_satisfy
+    expression: "currency in ('USD','EUR','GBP','CAD')"
+    label: currency_in_supported_set
+    severity: error
+
+  # tier 3 - statistical, corpus grain, catches silent drift
+  - type: expect_field_null_rate_between
+    max_rate: 0.20
+    severity: warn
+
+  # tier 4 - model based; blocked at plan time without a calibration
+  - type: expect_field_trustworthy
+    provider: cheap_verifier
+    strategy: ensemble
+    audit_rate: 0.05
+    calibration: invoices_v1
+    severity: error

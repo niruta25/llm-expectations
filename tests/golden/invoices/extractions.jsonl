@@ -1,0 +1,63 @@
+{"doc_id": "g1", "field_name": "vendor", "value": "Brightstone Manufacturing"}
+{"doc_id": "g1", "field_name": "invoice_date", "value": "February 12, 2024"}
+{"doc_id": "g1", "field_name": "total_amount", "value": "1,530.00"}
+{"doc_id": "g1", "field_name": "currency", "value": "USD"}
+{"doc_id": "g1", "field_name": "subtotal", "value": 1400.0}
+{"doc_id": "g1", "field_name": "tax", "value": 130.0}
+{"doc_id": "g1", "field_name": "total_num", "value": 1530.0}
+{"doc_id": "g2", "field_name": "vendor", "value": "Northwind Traders Ltd"}
+{"doc_id": "g2", "field_name": "invoice_date", "value": "03 March 2024"}
+{"doc_id": "g2", "field_name": "total_amount", "value": "4,215.60"}
+{"doc_id": "g2", "field_name": "currency", "value": "EUR"}
+{"doc_id": "g2", "field_name": "subtotal", "value": 4000.0}
+{"doc_id": "g2", "field_name": "tax", "value": 215.6}
+{"doc_id": "g2", "field_name": "total_num", "value": 4215.6}
+{"doc_id": "g3", "field_name": "vendor", "value": "Ashfield Components"}
+{"doc_id": "g3", "field_name": "invoice_date", "value": "May 30, 2024"}
+{"doc_id": "g3", "field_name": "total_amount", "value": "7,430.10"}
+{"doc_id": "g3", "field_name": "currency", "value": "USD"}
+{"doc_id": "g3", "field_name": "subtotal", "value": 7000.0}
+{"doc_id": "g3", "field_name": "tax", "value": 340.1}
+{"doc_id": "g3", "field_name": "total_num", "value": 7340.1}
+{"doc_id": "g4", "field_name": "vendor", "value": "Northgate Supply"}
+{"doc_id": "g4", "field_name": "invoice_date", "value": "December 2, 2023"}
+{"doc_id": "g4", "field_name": "total_amount", "value": "890.25"}
+{"doc_id": "g4", "field_name": "currency", "value": "USD"}
+{"doc_id": "g4", "field_name": "subtotal", "value": 830.25}
+{"doc_id": "g4", "field_name": "tax", "value": 60.0}
+{"doc_id": "g4", "field_name": "total_num", "value": 890.25}
+{"doc_id": "g5", "field_name": "vendor", "value": "Harborview Clinics"}
+{"doc_id": "g5", "field_name": "invoice_date", "value": "April 4, 2024"}
+{"doc_id": "g5", "field_name": "total_amount", "value": "2,100.00"}
+{"doc_id": "g5", "field_name": "currency", "value": "GBP"}
+{"doc_id": "g5", "field_name": "subtotal", "value": 2000.0}
+{"doc_id": "g5", "field_name": "tax", "value": 100.0}
+{"doc_id": "g5", "field_name": "total_num", "value": 2100.0}
+{"doc_id": "g6", "field_name": "vendor", "value": "Lakeview Print Co", "span": [40, 57]}
+{"doc_id": "g6", "field_name": "invoice_date", "value": "June 14, 2024"}
+{"doc_id": "g6", "field_name": "total_amount", "value": "512.00"}
+{"doc_id": "g6", "field_name": "currency", "value": "CAD"}
+{"doc_id": "g6", "field_name": "subtotal", "value": 480.0}
+{"doc_id": "g6", "field_name": "tax", "value": 32.0}
+{"doc_id": "g6", "field_name": "total_num", "value": 512.0}
+{"doc_id": "g7", "field_name": "vendor", "value": "Pinehill Foods"}
+{"doc_id": "g7", "field_name": "invoice_date", "value": "July 1, 2024"}
+{"doc_id": "g7", "field_name": "total_amount", "value": "305.00"}
+{"doc_id": "g7", "field_name": "currency", "value": null}
+{"doc_id": "g7", "field_name": "subtotal", "value": 285.0}
+{"doc_id": "g7", "field_name": "tax", "value": 20.0}
+{"doc_id": "g7", "field_name": "total_num", "value": 305.0}
+{"doc_id": "g8", "field_name": "vendor", "value": "Sandbrook Media"}
+{"doc_id": "g8", "field_name": "invoice_date", "value": "2024-02-31"}
+{"doc_id": "g8", "field_name": "total_amount", "value": "1,010.00"}
+{"doc_id": "g8", "field_name": "currency", "value": "USD"}
+{"doc_id": "g8", "field_name": "subtotal", "value": 950.0}
+{"doc_id": "g8", "field_name": "tax", "value": 60.0}
+{"doc_id": "g8", "field_name": "total_num", "value": 1010.0}
+{"doc_id": "g9", "field_name": "vendor", "value": "Quarry Lane Tools"}
+{"doc_id": "g9", "field_name": "invoice_date", "value": "August 9, 2024"}
+{"doc_id": "g9", "field_name": "total_amount", "value": "645.00"}
+{"doc_id": "g9", "field_name": "currency", "value": "USD"}
+{"doc_id": "g9", "field_name": "subtotal", "value": 600.0}
+{"doc_id": "g9", "field_name": "tax", "value": 45.0}
+{"doc_id": "g9", "field_name": "total_num", "value": 654.0}

@@ -1,0 +1,103 @@
+[project]
+name = "llm-expectations"
+version = "0.1.0"
+description = "Pluggable data quality framework for LLM extractions"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+keywords = ["data-quality", "llm", "extraction", "expectations", "calibration"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = ["pyyaml>=6"]
+
+# Distribution name is `llm-expectations` for discoverability; the import name
+# is `llmex` so it is five characters at the top of every file. Same pattern as
+# beautifulsoup4 -> bs4 and scikit-learn -> sklearn.
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML>=6",
+]
+
+[project.urls]
+Homepage = "https://github.com/llm-expectations/llm-expectations"
+Documentation = "https://github.com/llm-expectations/llm-expectations/blob/main/DESIGN.md"
+
+# Entry-point group names are public API. Every third-party plugin declares
+# against these; renaming after plugins exist breaks the whole ecosystem.
+# Core ships the entries below. Third-party distributions add their own under
+# the same groups and become available with no core changes.
+[project.entry-points."llmex.providers"]
+mock = "llmex.providers.mock:MockProvider"
+
+[project.entry-points."llmex.strategies"]
+single_judge = "llmex.strategies.builtin:SingleJudge"
+per_field_judge = "llmex.strategies.builtin:PerFieldJudge"
+diverse_ensemble = "llmex.strategies.builtin:DiverseEnsemble"
+logprob = "llmex.strategies.builtin:LogprobScore"
+
+[project.entry-points."llmex.expectations"]
+expect_field_grounded_in_source = "llmex.expectations.builtin:ExpectFieldGroundedInSource"
+expect_field_type = "llmex.expectations.builtin:ExpectFieldType"
+expect_fields_to_satisfy = "llmex.expectations.builtin:ExpectFieldsToSatisfy"
+expect_field_null_rate_between = "llmex.expectations.builtin:ExpectFieldNullRateBetween"
+expect_field_trustworthy = "llmex.expectations.builtin:ExpectFieldTrustworthy"
+
+[project.entry-points."llmex.aggregators"]
+harmonic = "llmex.aggregate:harmonic"
+weighted_harmonic = "llmex.aggregate:weighted_harmonic"
+arithmetic = "llmex.aggregate:arithmetic"
+minimum = "llmex.aggregate:minimum"
+
+[project.entry-points."llmex.sinks"]
+jsonl = "llmex.sinks:JsonlSink"
+console = "llmex.sinks:ConsoleSink"
+
+# M8. Declared now so the group name is settled before plugins exist.
+[project.entry-points."llmex.engines"]
+
+[tool.setuptools.packages.find]
+include = ["llmex*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+# S101 asserts are the point of a test file; S311 pseudo-random is not crypto.
+"tests/*" = ["S101", "S311"]
+"demo.py" = ["S101", "E501"]
+
+[tool.mypy]
+strict = true
+files = ["llmex"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+strict = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "raise NotImplementedError", "\\.\\.\\."]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
