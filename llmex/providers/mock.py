@@ -147,6 +147,47 @@ class MockLabelJudge(MockProvider):
         )
 
 
+@PROVIDERS.plugin("mock_pairwise")
+class MockPairwiseJudge(MockLabelJudge):
+    """A fixture judge for A/B comparison.
+
+    Prefers whichever candidate's values share more vocabulary with the
+    document, and ties when they share the same amount. Its verdict depends
+    only on content, so it shows no position bias — which makes it useful for
+    proving the swap-and-confirm machinery runs, and useless for proving that
+    machinery is *needed*. For that, see the deliberately biased fake in
+    `tests/test_compare.py`.
+    """
+
+    id = "mock_pairwise"
+    model_version = "mock-pairwise-1.0"
+
+    async def complete(self, req: CompletionRequest) -> CompletionResponse:
+        await asyncio.sleep(self._latency / 1000)
+        payload = json.loads(req.user)
+        document = str(payload.get("document", "")).casefold()
+
+        def overlap(candidate: dict[str, Any]) -> int:
+            hits = 0
+            for value in candidate.values():
+                tokens = [] if value in (None, "", []) else self._tokens(value)
+                hits += sum(1 for t in tokens if t in document)
+            return hits
+
+        a, b = overlap(payload.get("output_A", {})), overlap(payload.get("output_B", {}))
+        winner = "A" if a > b else "B" if b > a else "tie"
+        reason = f"output_A matched {a} document terms, output_B matched {b}"
+
+        body = json.dumps({"winner": winner, "reason": reason})
+        return CompletionResponse(
+            text=body,
+            parsed={"winner": winner, "reason": reason},
+            tokens_in=max(1, len(req.user) // CHARS_PER_TOKEN),
+            tokens_out=max(1, len(body) // CHARS_PER_TOKEN),
+            latency_ms=self._latency,
+        )
+
+
 class HTTPChatProvider:
     """Skeleton for a real adapter. Subclass and fill in `_post`.
 

@@ -42,6 +42,7 @@ Documentation = "https://github.com/llm-expectations/llm-expectations/blob/main/
 [project.entry-points."llmex.providers"]
 mock = "llmex.providers.mock:MockProvider"
 mock_judge = "llmex.providers.mock:MockLabelJudge"
+mock_pairwise = "llmex.providers.mock:MockPairwiseJudge"
 
 [project.entry-points."llmex.strategies"]
 single_judge = "llmex.strategies.builtin:SingleJudge"

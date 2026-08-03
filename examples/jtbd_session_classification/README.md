@@ -62,6 +62,21 @@ document, field grain and document grain are arithmetically identical and the
 gap this framework exists to surface cannot appear. Two fields is the minimum
 that makes document accuracy mean something.
 
+## The A/B arm
+
+The corpus carries a second variant (`pred_jtbd_v5`) that fixes three of v4's
+six misclassifications and introduces one new one:
+
+```python
+batch_v4 = load_sessions()                  # 18/24 correct
+batch_v5 = load_sessions(variant="v5")      # 20/24 correct
+```
+
+v5 is genuinely better, and the comparison says **p = 0.625** — nowhere near
+enough evidence to act on. Three net wins across 24 sessions is a coin flip.
+That is the most useful thing in the example: the free win rate reads 75% of
+decided documents, and shipping on it would be a mistake.
+
 ## What the demo will not tell you
 
 `MockLabelJudge` scores on how much of a label's vocabulary appears in the

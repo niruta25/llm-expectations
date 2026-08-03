@@ -27,14 +27,18 @@ from data import FIELDS, load_sessions  # noqa: E402
 from taxonomy import BASELINE_DISTRIBUTION, LABELS, RUBRIC  # noqa: E402
 
 from llmex import (  # noqa: E402
+    PROVIDERS,
     ConsoleSink,
     Grain,
     LabelledDecision,
+    PairwiseJudge,
     PlanError,
     Planner,
     Runner,
     Suite,
     calibrate_judge,
+    compare_runs,
+    compare_with_judge,
     normalise_label,
     report_from_batch,
 )
@@ -226,6 +230,41 @@ async def main() -> None:
         print(f"    {exp_id:<42} {n}")
     print("\n  Nothing silently passed. The checks that needed gold said so,")
     print("  and the judge — which never needed it — carried on.")
+
+    section("7. A/B — is the new agent variant actually better?")
+    batch_v5 = load_sessions(variant="v5")
+    ab_suite = Suite.from_dict(SUITE, calibrations={"jtbd_session_v1": cal})
+    run_v4 = await Runner().run(ab_suite, batch)
+    run_v5 = await Runner().run(ab_suite, batch_v5)
+
+    free = compare_runs(
+        run_v4, run_v5, a_label="agent-v4", b_label="agent-v5",
+        on=["expect_field_matches_gold"],
+    )
+    print(f"  free comparison   {free.wins_b} won, {free.wins_a} lost, {free.ties} tied")
+    print(f"  win rate          {free.win_rate_b:.1%} of all documents, "
+          f"{free.win_rate_b_decided:.1%} of the decided ones")
+    print(f"  p-value           {free.p_value:.3f}")
+    print(f"\n  {free.verdict()}")
+    print("\n  v5 really is more accurate on this corpus. Twenty-four sessions")
+    print("  cannot tell you that, and a win rate quoted without the p-value")
+    print("  would have shipped it anyway.")
+
+    judged = await compare_with_judge(
+        batch, batch_v5,
+        PairwiseJudge(rubric=RUBRIC),
+        PROVIDERS.get("mock_pairwise")(),
+        fields=["jtbd_label"],
+        a_label="agent-v4", b_label="agent-v5",
+    )
+    print(f"\n  judged comparison {judged.wins_b} won, {judged.wins_a} lost, "
+          f"{judged.ties} tied  (${judged.cost.usd:.4f}, {judged.cost.calls} calls)")
+    print(f"  position flips    {judged.position_flips}")
+    for note in judged.notes:
+        print(f"    - {note}")
+    print("\n  Every judged document is graded twice, with the candidates swapped.")
+    print("  A verdict that does not survive the swap is scored a tie, because a")
+    print("  judge that answers by argument order is not answering the question.")
 
     print("\n" + "=" * 74)
     print("Every number above came from a fixture judge that scores on lexical")

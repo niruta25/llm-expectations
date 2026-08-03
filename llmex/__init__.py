@@ -48,6 +48,15 @@ from .classification import (
     report,
     report_from_batch,
 )
+from .compare import (
+    Comparison,
+    DocumentVerdict,
+    PairwiseJudge,
+    PairwisePayload,
+    compare_runs,
+    compare_with_judge,
+    mcnemar_exact,
+)
 from .expectation import Expectation, SyncExpectation, field_check
 from .planner import Plan, Planner, Step
 from .registry import (
@@ -122,6 +131,14 @@ __all__ = [
     "confidence_gap",
     "precision_at_k",
     "threshold_for_precision",
+    # comparison
+    "Comparison",
+    "DocumentVerdict",
+    "PairwiseJudge",
+    "PairwisePayload",
+    "compare_runs",
+    "compare_with_judge",
+    "mcnemar_exact",
     # classification
     "ClassificationReport",
     "confusion_matrix",

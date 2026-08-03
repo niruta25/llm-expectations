@@ -874,6 +874,64 @@ All clamp inputs to `[EPS, 1.0]` so a zero score does not divide by zero.
 
 ---
 
+### 6.4 Comparing two variants (A/B)
+
+**This deliberately is not an expectation.** A `Result` describes one document
+under one check. "Variant B beats variant A" is a statement about two *runs*,
+at a grain the domain model does not have, and bolting it into `Grain` to make
+it fit would have distorted every other check to accommodate one.
+
+It lives in `llmex.compare`, as functions over runs.
+
+| Entry point | Cost | Use when |
+|---|---|---|
+| `compare_runs(run_a, run_b, on=[...])` | free | Both variants already have results |
+| `compare_with_judge(batch_a, batch_b, judge, provider)` | $$ | Nothing free separates them |
+
+Free comparison scores a document to whichever variant failed fewer of the
+checks *both runs actually scored on it*. A check sampled out of one run says
+nothing about the other, and counting it would let sampling luck pick the
+winner.
+
+#### Significance is not optional
+
+Every `Comparison` reports an exact two-sided **McNemar** p-value over the
+discordant documents — the ones where exactly one variant succeeded. Documents
+both variants got right, or both wrong, carry no information about which is
+better and are excluded from the test while remaining in the denominator.
+
+Exact rather than the chi-square approximation, because the discordant count in
+a real A/B is routinely under 25, which is precisely where the approximation
+misleads.
+
+Two win rates are reported and the conservative one leads:
+
+```
+win_rate_b           B's share of all documents, ties included
+win_rate_b_decided   B's share of the documents that separated the variants
+```
+
+Most documents tie in a genuine A/B. Quoting only the second number turns a
+three-document lead into a "75% win rate", which is how underpowered results
+get shipped. `Comparison.verdict()` states the boring answer in words, plus how
+many more net wins would be needed to reach significance.
+
+#### Position bias in pairwise judging
+
+`PairwiseJudge` grades every document **twice, with the candidates swapped**,
+and counts a verdict only when both orders agree. Disagreements are scored as
+ties and counted in `position_flips`.
+
+This doubles the cost and is not configurable away by default. Pairwise LLM
+judges have a well-documented preference for whichever candidate they see
+first; an uncontrolled pairwise run produces a win rate manufactured by
+argument order. A high flip count is not a broken judge — it is the judge
+telling you the two variants are closer together than it can resolve.
+
+Documents whose outputs are identical are tied without a model call, since
+paying to confirm that two identical strings are identical is the most
+avoidable spend in the pipeline.
+
 ## 7. Execution model
 
 ### 7.1 Planning

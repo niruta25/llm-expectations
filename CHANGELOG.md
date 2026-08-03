@@ -6,6 +6,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added — A/B comparison
+
+- `llmex.compare`, deliberately **not** an expectation: a `Result` describes one
+  document, and "variant B beats variant A" is a statement about two runs at a
+  grain the domain model does not have.
+  - `compare_runs(run_a, run_b, on=[...])` — free. A document goes to whichever
+    variant failed fewer of the checks both runs actually scored on it; a check
+    sampled out of one run is not evidence about the other.
+  - `PairwiseJudge` + `compare_with_judge()` — grades each document **twice
+    with the candidates swapped** and scores a tie when the verdict does not
+    survive the swap, counting it in `position_flips`. Doubles the cost and is
+    on by default: pairwise judges prefer whichever candidate they see first,
+    and uncontrolled the win rate is manufactured by argument order. Documents
+    with identical output are tied without a model call.
+  - `mcnemar_exact()` — exact two-sided McNemar over the discordant documents,
+    reported on every `Comparison`. Exact rather than chi-square because the
+    discordant count in a real A/B is routinely under 25.
+  - Two win rates, conservative first: `win_rate_b` includes ties,
+    `win_rate_b_decided` excludes them. `Comparison.verdict()` states the boring
+    answer in words and how many more net wins significance would need.
+- `MockPairwiseJudge`, and a JTBD variant `v5` in the example corpus. It is
+  genuinely more accurate than `v4` and the comparison returns p = 0.625, which
+  is the lesson: three net wins over 24 sessions is a coin flip.
+
 ### Added — judge-backed classification (J1–J6)
 
 - **J1, free tier.** `expect_field_matches_gold` compares a label against a

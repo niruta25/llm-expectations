@@ -25,7 +25,7 @@ The distribution is `llm-expectations`; the import is `llmex`. Same pattern as
 ```bash
 python demo.py          # extraction walkthrough, offline, no API key
 python demo_jtbd.py     # judge-backed classification, same
-pytest -q               # 190 tests, all offline
+pytest -q               # 211 tests, all offline
 ```
 
 ## The position
@@ -150,6 +150,37 @@ convention, and one the tests assert.
 
 See [`examples/jtbd_session_classification/`](examples/jtbd_session_classification/)
 for a worked example, and `suite.jtbd.example.yml` for the full config.
+
+## A/B between two variants
+
+Deliberately not an expectation: a `Result` describes one document, and "B beats
+A" is a statement about two runs. It lives in `llmex.compare`.
+
+```python
+cmp = compare_runs(run_v4, run_v5, a_label="v4", b_label="v5",
+                   on=["expect_field_matches_gold"])
+print(cmp.verdict())
+# no significant difference over 24 documents (v5 3, v4 1, 20 tied; p=0.625).
+# About 5 more net wins on top of the current 4 decided documents would be needed.
+```
+
+That is the number teams skip. v5 really is more accurate there — and 24
+documents cannot demonstrate it. Every comparison carries an exact two-sided
+McNemar p-value over the discordant documents, and reports the win rate
+including ties before the flattering one that excludes them.
+
+For the cases nothing free separates, `PairwiseJudge` grades each document
+**twice with the candidates swapped** and scores a tie whenever the verdict
+does not survive the swap:
+
+```python
+cmp = await compare_with_judge(batch_a, batch_b, PairwiseJudge(), provider)
+cmp.position_flips   # documents where argument order decided the winner
+```
+
+Pairwise judges prefer whichever candidate they see first. Controlling for it
+doubles the cost and is on by default, because the alternative is a win rate
+manufactured by argument order.
 
 ## Three result states, not two
 

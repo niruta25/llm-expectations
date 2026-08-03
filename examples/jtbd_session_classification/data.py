@@ -33,10 +33,20 @@ def load_rows(path: str | Path | None = None) -> list[dict]:
     return [json.loads(line) for line in source.read_text().splitlines() if line.strip()]
 
 
+VARIANTS = {"v4": "", "v5": "_v5"}
+"""Two agent variants over the same sessions, for the A/B arm.
+
+v5 fixes three of v4's six misclassifications and introduces one new one. That
+is a real improvement and — over 24 sessions — nowhere near enough evidence to
+say so, which is the point the comparison makes.
+"""
+
+
 def load_sessions(
     path: str | Path | None = None,
     with_gold: bool = True,
-    prompt_version: str = "jtbd-classify@v4",
+    variant: str = "v4",
+    prompt_version: str | None = None,
 ) -> Batch:
     """A Batch of session extractions.
 
@@ -44,6 +54,9 @@ def load_sessions(
     The same suite runs either way — checks that need gold report themselves
     unscored rather than passing, which is how you can tell the difference.
     """
+    if variant not in VARIANTS:
+        raise ValueError(f"unknown variant {variant!r}; known: {sorted(VARIANTS)}")
+    suffix = VARIANTS[variant]
     rows = load_rows(path)
     texts = {r["doc_id"]: r["text"] for r in rows}
     records: list[ExtractionRecord] = []
@@ -59,9 +72,9 @@ def load_sessions(
                 ExtractionRecord(
                     doc_id=row["doc_id"],
                     field_name=field_name,
-                    value=row[f"pred_{_key(field_name)}"],
-                    prompt_version=prompt_version,
-                    generator_model="agent-v4",
+                    value=row[f"pred_{_key(field_name)}{suffix}"],
+                    prompt_version=prompt_version or f"jtbd-classify@{variant}",
+                    generator_model=f"agent-{variant}",
                     meta=meta,
                 )
             )
