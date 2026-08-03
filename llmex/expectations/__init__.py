@@ -9,11 +9,21 @@ from .builtin import (
     ExpectFieldTrustworthy,
     ExpectFieldType,
 )
+from .classification import (
+    ExpectExtractionLabelTrustworthy,
+    ExpectFieldMatchesGold,
+    ExpectJudgeAgreesWithGold,
+    ExpectLabelDistributionStable,
+)
 
 __all__ = [
+    "ExpectExtractionLabelTrustworthy",
     "ExpectFieldGroundedInSource",
+    "ExpectFieldMatchesGold",
     "ExpectFieldNullRateBetween",
     "ExpectFieldTrustworthy",
     "ExpectFieldType",
     "ExpectFieldsToSatisfy",
+    "ExpectJudgeAgreesWithGold",
+    "ExpectLabelDistributionStable",
 ]

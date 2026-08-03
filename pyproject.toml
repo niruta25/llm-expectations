@@ -41,12 +41,14 @@ Documentation = "https://github.com/llm-expectations/llm-expectations/blob/main/
 # the same groups and become available with no core changes.
 [project.entry-points."llmex.providers"]
 mock = "llmex.providers.mock:MockProvider"
+mock_judge = "llmex.providers.mock:MockLabelJudge"
 
 [project.entry-points."llmex.strategies"]
 single_judge = "llmex.strategies.builtin:SingleJudge"
 per_field_judge = "llmex.strategies.builtin:PerFieldJudge"
 diverse_ensemble = "llmex.strategies.builtin:DiverseEnsemble"
 logprob = "llmex.strategies.builtin:LogprobScore"
+label_judge = "llmex.strategies.judge:LabelJudge"
 
 [project.entry-points."llmex.expectations"]
 expect_field_grounded_in_source = "llmex.expectations.builtin:ExpectFieldGroundedInSource"
@@ -54,6 +56,10 @@ expect_field_type = "llmex.expectations.builtin:ExpectFieldType"
 expect_fields_to_satisfy = "llmex.expectations.builtin:ExpectFieldsToSatisfy"
 expect_field_null_rate_between = "llmex.expectations.builtin:ExpectFieldNullRateBetween"
 expect_field_trustworthy = "llmex.expectations.builtin:ExpectFieldTrustworthy"
+expect_field_matches_gold = "llmex.expectations.classification:ExpectFieldMatchesGold"
+expect_label_distribution_stable = "llmex.expectations.classification:ExpectLabelDistributionStable"
+expect_extraction_label_trustworthy = "llmex.expectations.classification:ExpectExtractionLabelTrustworthy"
+expect_judge_agrees_with_gold = "llmex.expectations.classification:ExpectJudgeAgreesWithGold"
 
 [project.entry-points."llmex.aggregators"]
 harmonic = "llmex.aggregate:harmonic"

@@ -23,8 +23,9 @@ The distribution is `llm-expectations`; the import is `llmex`. Same pattern as
 `beautifulsoup4` → `bs4`.
 
 ```bash
-python demo.py          # full walkthrough, offline, no API key
-pytest -q               # 130 tests, all offline
+python demo.py          # extraction walkthrough, offline, no API key
+python demo_jtbd.py     # judge-backed classification, same
+pytest -q               # 190 tests, all offline
 ```
 
 ## The position
@@ -112,6 +113,44 @@ def currency_is_iso(rec, batch, ctx):
     return ok, Evidence("enum", {"got": rec.value})
 ```
 
+## Model-based expectations and LLM judges
+
+An LLM judge is a classifier that predicts "this output is wrong." That framing
+is the whole of our position: a classifier you have not measured is an opinion,
+and the framework refuses to let one block a run.
+
+For classification tasks the argument gets sharper, because a gold set answers
+"is this right?" exactly, for nothing:
+
+```yaml
+- type: expect_field_matches_gold          # free. Exact where a human labelled.
+  fields: ["jtbd_label"]
+- type: expect_label_distribution_stable   # free. Catches collapse onto one label.
+  max_share: 0.5
+- type: expect_extraction_label_trustworthy   # $$. For the rest — which in
+  fields: ["jtbd_label"]                      #     production is all of them.
+  strategy: label_judge
+  calibration: jtbd_session_v1
+- type: expect_judge_agrees_with_gold      # free. Grades the grader.
+  min_kappa: 0.4
+```
+
+The judge earns its place only where nobody labelled anything. Everything above
+it is free, and you should know the accuracy, the confusion matrix and the
+label distribution before you spend a cent.
+
+`expect_judge_agrees_with_gold` reports **Cohen's kappa**, not raw agreement.
+On a skewed taxonomy a judge that approves everything agrees with humans most
+of the time while carrying no information; only kappa says so. It runs in a
+fourth tier, `derived`, after the checks it reads.
+
+A judge never sees the gold label. Gold rides on `ExtractionRecord.meta` and
+`ScorePayload` has no field to carry it — a structural guarantee rather than a
+convention, and one the tests assert.
+
+See [`examples/jtbd_session_classification/`](examples/jtbd_session_classification/)
+for a worked example, and `suite.jtbd.example.yml` for the full config.
+
 ## Three result states, not two
 
 `success=None` means *deliberately unscored* — sampled out, budget capped, or
@@ -132,6 +171,23 @@ cal = calibrate(
 
 Thresholds are derived from a target precision, never typed by hand. AUROC is
 rank-based (Mann-Whitney U), implemented without numpy or sklearn.
+
+For judges over categorical fields, `calibrate_judge` adds kappa, raw agreement
+and per-label thresholds:
+
+```python
+cal = calibrate_judge(
+    id="jtbd_session_v1", decisions=labelled_decisions,
+    provider_id=p.id, model_version=p.model_version, strategy_id=s.id,
+    target_precision=0.9,
+)
+```
+
+**It will sometimes refuse.** If no cut achieves the target precision at any
+recall above zero, you get a threshold of 0.0 and a recall of 0.0 rather than a
+number that reads defensible and is not. `demo_jtbd.py` hits exactly that at
+0.90 and refits at 0.80, stating the recall it costs. That is the intended
+experience, not a bug.
 
 Note: the demo reports AUROC 1.00 because `MockProvider` scores by substring
 containment, which is exactly what the labels encode. Real verifiers land far

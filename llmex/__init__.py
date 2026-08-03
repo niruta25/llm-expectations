@@ -18,23 +18,35 @@ The distribution is `llm-expectations`; the import is `llmex`.
 
 from __future__ import annotations
 
-# Importing these for their side effect: the decorators inside register the
-# built-ins, so `Suite.from_dict({"type": "expect_field_type"})` resolves
-# without the caller importing anything.
-from . import expectations as expectations  # noqa: E402,F401  (isort: keep last)
-from . import providers as providers  # noqa: E402,F401
-from . import strategies as strategies  # noqa: E402,F401
+# Imported for their side effect as much as their contents: the decorators
+# inside register the built-ins, so `Suite.from_dict({"type": "expect_field_type"})`
+# resolves without the caller importing anything. Order among these does not
+# matter — each pulls in whatever lower layer it needs.
+from . import expectations as expectations  # noqa: F401
+from . import providers as providers  # noqa: F401
+from . import strategies as strategies  # noqa: F401
 from .aggregate import arithmetic, harmonic, minimum, weighted_harmonic
 from .batch import Batch, Context, ExtractionRecord, SourceDoc
 from .budget import Budget
 from .calibration import (
     Calibration,
+    LabelledDecision,
     LabelledScore,
+    agreement_rate,
     auroc,
     calibrate,
+    calibrate_judge,
+    cohens_kappa,
     confidence_gap,
     precision_at_k,
     threshold_for_precision,
+)
+from .classification import (
+    ClassificationReport,
+    confusion_matrix,
+    normalise_label,
+    report,
+    report_from_batch,
 )
 from .expectation import Expectation, SyncExpectation, field_check
 from .planner import Plan, Planner, Step
@@ -100,12 +112,22 @@ __all__ = [
     "Calibration",
     "CalibrationStore",
     "FileCalibrationStore",
+    "LabelledDecision",
     "LabelledScore",
+    "agreement_rate",
     "auroc",
     "calibrate",
+    "calibrate_judge",
+    "cohens_kappa",
     "confidence_gap",
     "precision_at_k",
     "threshold_for_precision",
+    # classification
+    "ClassificationReport",
+    "confusion_matrix",
+    "normalise_label",
+    "report",
+    "report_from_batch",
     # aggregation
     "arithmetic",
     "harmonic",

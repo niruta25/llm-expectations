@@ -20,7 +20,6 @@ from ..defaults import (
     DEFAULT_MIN_RATIO,
     DEFAULT_PROVIDER_ALIAS,
     DEFAULT_SAMPLING_SEED,
-    DEFAULT_STRATEGY_ALIAS,
     GROUNDING_WINDOW_DIVISOR,
     MIN_ESTIMATED_ESCALATION_RATE,
     THRESHOLD_SOURCE_MANUAL,
@@ -308,6 +307,13 @@ class ExpectFieldTrustworthy(Expectation):
     grain = Grain.FIELD
     required_capabilities = frozenset({Capability.STRUCTURED_OUTPUT})
 
+    # Subclass overrides. Everything below this line — escalation, budget
+    # reservation, the four skip paths, threshold provenance — is the same
+    # regardless of what is being verified, so a variant supplies these three
+    # and inherits the rest rather than reimplementing it.
+    field_evidence_kind: str = "trust_score"
+    document_evidence_kind: str = "trust_score_doc"
+
     def estimate_calls(self, batch: Batch) -> int:
         n_docs = len(batch.doc_ids)
         rate = float(self.config.get("audit_rate", DEFAULT_AUDIT_RATE))
@@ -318,7 +324,7 @@ class ExpectFieldTrustworthy(Expectation):
 
     async def validate(self, batch: Batch, ctx: Context) -> list[Result]:
         provider = ctx.providers[self.config.get("provider", DEFAULT_PROVIDER_ALIAS)]
-        strategy = ctx.strategies[self.config.get("strategy", DEFAULT_STRATEGY_ALIAS)]
+        strategy = ctx.strategies[self.config.get("strategy", self.default_strategy)]
         cal_id = self.config.get("calibration")
         calibration = ctx.calibrations.get(cal_id) if cal_id else None
         audit_rate = float(self.config.get("audit_rate", DEFAULT_AUDIT_RATE))
@@ -335,8 +341,21 @@ class ExpectFieldTrustworthy(Expectation):
             strategy_id=strategy.id,
         )
 
+        # Which fields this check is responsible for. Honouring it is not
+        # cosmetic: a verifier grades — and bills for — every field handed to
+        # it, so a config naming two fields on a twelve-field schema must not
+        # quietly pay for the other ten.
+        targets = self.config.get("fields", ["*"])
+        wanted = None if targets == ["*"] else set(targets)
+
         out: list[Result] = []
-        for doc_id, recs in batch.by_document().items():
+        for doc_id, all_recs in batch.by_document().items():
+            recs = (
+                all_recs if wanted is None else [r for r in all_recs if r.field_name in wanted]
+            )
+            if not recs:
+                continue
+
             suspect = any(
                 ctx.prior.get((doc_id, r.field_name), True) is False for r in recs
             )
@@ -396,14 +415,17 @@ class ExpectFieldTrustworthy(Expectation):
                         severity=self.severity,
                         observed=rec.value,
                         evidence=Evidence(
-                            "trust_score",
+                            self.field_evidence_kind,
                             {
                                 "explanation": scoreset.explanations.get(rec.field_name, ""),
                                 "calls_used": scoreset.n_calls_used,
                                 "calls_dropped": scoreset.n_calls_dropped,
                             },
                         ),
-                        cost=scoreset.cost,
+                        # Zero, deliberately. One call scored every field on
+                        # this document, and the runner sums cost across rows:
+                        # repeating it here would report the spend two or three
+                        # times over. The document row below carries it.
                         provenance=prov,
                     )
                 )
@@ -421,7 +443,7 @@ class ExpectFieldTrustworthy(Expectation):
                     threshold_source=doc_source,
                     severity=self.severity,
                     evidence=Evidence(
-                        "trust_score_doc",
+                        self.document_evidence_kind,
                         {
                             # Reported by the strategy, not assumed here: a
                             # strategy is free to roll fields up differently.
@@ -429,6 +451,7 @@ class ExpectFieldTrustworthy(Expectation):
                             "weakest_field": min(fs, key=lambda k: fs[k]) if fs else None,
                         },
                     ),
+                    # The whole document's verification cost lands here, once.
                     cost=scoreset.cost,
                     provenance=prov,
                 )

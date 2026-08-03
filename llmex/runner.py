@@ -53,6 +53,7 @@ class Runner:
                 self._merge_prior(ctx, produced)
 
             results.extend(produced)
+            ctx.prior_results.extend(produced)
             for r in produced:
                 total = total + r.cost
 

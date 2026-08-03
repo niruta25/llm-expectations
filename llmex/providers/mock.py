@@ -79,6 +79,74 @@ class MockProvider:
         )
 
 
+JUDGE_FLOOR = 0.10
+JUDGE_RANGE = 0.85
+"""A mock judge's score spans [FLOOR, FLOOR + RANGE] as label-token coverage of
+the document goes from none to complete."""
+
+
+@PROVIDERS.plugin("mock_judge")
+class MockLabelJudge(MockProvider):
+    """A fixture judge for label-valued extractions.
+
+    `MockProvider` scores by substring containment, which is useless for
+    classification: the label `password_reset` never appears verbatim in a
+    support transcript. This one scores on how much of the label's vocabulary
+    the document actually contains.
+
+    That is a real signal and a weak one — exactly what a fixture judge should
+    be. It agrees with a human often enough for a calibration to find a
+    meaningful threshold, and disagrees often enough that the resulting AUROC
+    is a number between 0.5 and 1.0 rather than a flattering 1.00.
+
+    It never reads `gold_label`. A mock that peeked at the answer would make
+    every downstream metric a property of this file.
+    """
+
+    id = "mock_judge"
+    model_version = "mock-judge-1.0"
+
+    _STOPWORDS = frozenset({"a", "an", "the", "of", "to", "and", "or", "for"})
+
+    @classmethod
+    def _tokens(cls, value: object) -> list[str]:
+        raw = "".join(c if c.isalnum() else " " for c in str(value).casefold())
+        return [t for t in raw.split() if t not in cls._STOPWORDS]
+
+    async def complete(self, req: CompletionRequest) -> CompletionResponse:
+        await asyncio.sleep(self._latency / 1000)
+        payload = json.loads(req.user)
+        document = str(payload.get("document", payload.get("source_text", ""))).casefold()
+        labels = payload.get("assigned_labels", payload.get("extraction", {}))
+
+        scores: dict[str, float] = {}
+        explanations: dict[str, str] = {}
+        for name, value in labels.items():
+            # Check emptiness before tokenising: str(None) is "none", which
+            # would otherwise be scored as a label with one unmatched term.
+            tokens = [] if value in (None, "", []) else self._tokens(value)
+            if not tokens:
+                scores[name] = NULL_SCORE
+                explanations[name] = "no label assigned"
+                continue
+            hits = [t for t in tokens if t in document]
+            coverage = len(hits) / len(tokens)
+            scores[name] = round(JUDGE_FLOOR + JUDGE_RANGE * coverage, 3)
+            explanations[name] = (
+                f"{len(hits)}/{len(tokens)} of the label's terms appear in the "
+                f"document ({', '.join(hits) if hits else 'none'})"
+            )
+
+        body = json.dumps({"field_scores": scores, "explanations": explanations})
+        return CompletionResponse(
+            text=body,
+            parsed={"field_scores": scores, "explanations": explanations},
+            tokens_in=max(1, len(req.user) // CHARS_PER_TOKEN),
+            tokens_out=max(1, len(body) // CHARS_PER_TOKEN),
+            latency_ms=self._latency,
+        )
+
+
 class HTTPChatProvider:
     """Skeleton for a real adapter. Subclass and fill in `_post`.
 

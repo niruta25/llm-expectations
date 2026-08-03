@@ -27,5 +27,7 @@ jobs:
         run: mypy llmex
       - name: Test
         run: pytest -q --cov=llmex --cov-report=term-missing
-      - name: Demo runs offline
-        run: python demo.py
+      - name: Demos run offline
+        run: |
+          python demo.py
+          python demo_jtbd.py

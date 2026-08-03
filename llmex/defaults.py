@@ -29,6 +29,14 @@ Alert on `threshold_source = 'manual' AND severity = 'error'`: that combination
 is a guard that slipped through.
 """
 
+GOLD_LABEL_KEY = "gold_label"
+"""Where a human label rides on an extraction: `ExtractionRecord.meta`.
+
+Gold belongs to the record, not to a parallel structure that can fall out of
+sync with it. A judge must never see this in a production run — only a
+calibration or evaluation run compares against it.
+"""
+
 # -- default aliases --------------------------------------------------------
 
 DEFAULT_PROVIDER_ALIAS = "default"
@@ -96,6 +104,26 @@ Override per run with `Planner(estimated_tokens_in=..., estimated_tokens_out=...
 once you have measured your own corpus; the estimate appears in the manifest so
 you can compare it against `actual`.
 """
+
+# -- classification ---------------------------------------------------------
+
+DEFAULT_MAX_LABEL_SHARE = 0.9
+"""Share of the corpus the commonest label may hold before it reads as collapse.
+
+A classifier that has quietly learned to answer the majority label for
+everything still scores well on accuracy in an unbalanced corpus. The
+distribution is what gives it away.
+"""
+
+DEFAULT_MIN_DISTINCT_LABELS = 2
+DEFAULT_MAX_DISTRIBUTION_SHIFT = 0.25
+"""Total variation distance from a baseline distribution before it is drift."""
+
+# -- judges -----------------------------------------------------------------
+
+DEFAULT_JUDGE_TEMPERATURE = 0.0
+"""A judge is a measuring instrument. Sampling noise in an instrument is a
+defect, not creativity."""
 
 # -- ensembles --------------------------------------------------------------
 

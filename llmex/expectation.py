@@ -18,6 +18,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .batch import Batch, Context, ExtractionRecord
+from .defaults import DEFAULT_STRATEGY_ALIAS
 from .registry import EXPECTATIONS
 from .result import Result
 from .types import Capability, Evidence, Grain, Kind, Provenance, Severity
@@ -32,6 +33,15 @@ class Expectation(ABC):
     kind: Kind = Kind.DETERMINISTIC
     grain: Grain = Grain.FIELD
     required_capabilities: frozenset[Capability] = frozenset()
+
+    default_strategy: str = DEFAULT_STRATEGY_ALIAS
+    """Strategy used when the config names none.
+
+    Declared on the base rather than read at the call site so the planner and
+    the expectation resolve the *same* strategy. A variant that defaults to a
+    different one would otherwise have its capabilities and calibration
+    validated against a strategy it never runs.
+    """
 
     def __init__(self, severity: Severity | str = Severity.ERROR, **config: Any) -> None:
         self.severity = Severity(severity)

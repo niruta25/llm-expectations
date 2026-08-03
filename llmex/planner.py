@@ -21,7 +21,6 @@ from typing import Any
 from .batch import Batch
 from .defaults import (
     DEFAULT_PROVIDER_ALIAS,
-    DEFAULT_STRATEGY_ALIAS,
     ESTIMATED_TOKENS_IN,
     ESTIMATED_TOKENS_OUT,
 )
@@ -50,7 +49,12 @@ class Plan:
 
         This ordering is load-bearing, not cosmetic.
         """
-        rank = {Kind.DETERMINISTIC: 0, Kind.STATISTICAL: 1, Kind.MODEL_BASED: 2}
+        rank = {
+            Kind.DETERMINISTIC: 0,
+            Kind.STATISTICAL: 1,
+            Kind.MODEL_BASED: 2,
+            Kind.DERIVED: 3,
+        }
         return sorted(self.steps, key=lambda s: rank[s.kind])
 
     def as_dict(self) -> dict[str, Any]:
@@ -162,7 +166,7 @@ class Planner:
 
     @staticmethod
     def _resolve_strategy(suite: Suite, exp: Expectation) -> Any:
-        alias = exp.config.get("strategy", DEFAULT_STRATEGY_ALIAS)
+        alias = exp.config.get("strategy", exp.default_strategy)
         if alias not in suite.strategies:
             raise PlanError(
                 f"{exp.id}: no strategy aliased '{alias}'. defined: {sorted(suite.strategies)}"

@@ -12,11 +12,23 @@ from typing import Any
 
 
 class Kind(str, Enum):
-    """Declared by every expectation. The planner routes on this."""
+    """Declared by every expectation. The planner routes on this.
+
+    The order of the members is the order the tiers execute in, and that
+    ordering is load-bearing: cheap verdicts gate expensive ones, and anything
+    derived from other checks has to wait until they have all reported.
+    """
 
     DETERMINISTIC = "deterministic"
     STATISTICAL = "statistical"
     MODEL_BASED = "model_based"
+    DERIVED = "derived"
+    """Computed from results other checks already produced. Free, and last.
+
+    A check that grades another check — judge-versus-human agreement, say —
+    cannot run in the statistical tier, because the results it reads do not
+    exist yet at that point.
+    """
 
 
 class Grain(str, Enum):

@@ -1,0 +1,60 @@
+# Judge-backed classification. Companion to suite.example.yml, which covers
+# extraction. Run it with: python demo_jtbd.py
+suite: jtbd_session_classification
+version: 4
+
+providers:
+  cheap_judge:
+    plugin: mock_judge        # swap for openai/anthropic via pip install llmex-<x>
+
+strategies:
+  jtbd_judge:
+    plugin: label_judge
+    # The taxonomy and rubric are config, not code: the same strategy grades
+    # any closed label set, and the calibration is keyed to what it was fitted on.
+    label_set:
+      - password_reset
+      - billing_dispute
+      - cancel_subscription
+      - data_export
+      - integration_setup
+      - bug_report
+    rubric: |
+      A Job To Be Done is what the user came to accomplish, not the surface
+      topic and not what the agent ended up doing. A user who mentions billing
+      while trying to leave is doing cancel_subscription, not billing_dispute.
+      If the transcript does not say what the user wanted, score near 0.5.
+
+budget:
+  max_usd: 5
+  max_calls: 20000
+
+expectations:
+  # Tier 1 — free, and exact wherever a human has labelled.
+  # Records without gold report unscored, never passed.
+  - type: expect_field_matches_gold
+    fields: ["jtbd_label", "outcome"]
+    severity: warn
+
+  # Tier 2 — free. Catches the collapse that accuracy cannot see.
+  - type: expect_label_distribution_stable
+    fields: ["jtbd_label"]
+    max_share: 0.5
+    severity: warn
+
+  # Tier 3 — costs money, so it names its fields explicitly. A verifier bills
+  # for every field handed to it.
+  - type: expect_extraction_label_trustworthy
+    fields: ["jtbd_label"]
+    provider: cheap_judge
+    strategy: jtbd_judge
+    calibration: jtbd_session_v1   # required at severity=error
+    audit_rate: 0.05               # 5% of clean sessions, 100% of suspect ones
+    severity: error
+
+  # Tier 4 — free, and grades the grader. Runs last because it reads the
+  # results tier 3 produced.
+  - type: expect_judge_agrees_with_gold
+    fields: ["jtbd_label"]
+    min_kappa: 0.4
+    severity: warn

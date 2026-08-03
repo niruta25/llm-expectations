@@ -690,6 +690,10 @@ learnable. Semantics differ where they must.
 | `expect_fields_to_satisfy` | deterministic | document | free | Cross-field rule violations |
 | `expect_field_null_rate_between` | statistical | corpus | free | Silent drift, extraction collapse |
 | `expect_field_trustworthy` | model_based | field + document | $$ | Plausible-but-wrong values |
+| `expect_field_matches_gold` | deterministic | field | free | Wrong labels, where a human labelled |
+| `expect_label_distribution_stable` | statistical | corpus | free | Collapse onto one label, distribution drift |
+| `expect_extraction_label_trustworthy` | model_based | field + document | $$ | Wrong labels, where nobody labelled |
+| `expect_judge_agrees_with_gold` | derived | corpus | free | A judge that is not worth listening to |
 
 #### `expect_field_grounded_in_source`
 
@@ -773,6 +777,53 @@ what tells you whether the cheap gates work at all.
 
 Skip paths, all producing `success=None` with a `SkipReason`:
 `SAMPLED_OUT`, `BUDGET_EXHAUSTED`, `PROVIDER_ERROR`.
+
+#### Evaluating extraction quality with LLM judges
+
+Classification is the one task where the framework's central problem — that
+there is nothing to reconcile against — partly dissolves. A human can say
+whether a label is right, exactly and cheaply. That changes what a judge is
+for, and the design follows the change rather than fighting it.
+
+**A judge earns its place only where gold does not exist.** Where a label has
+been annotated, `expect_field_matches_gold` answers the question outright for
+nothing. The judge covers the rest of the corpus, which in production is all of
+it. Any suite that runs a judge over labelled data and reports the result as a
+quality measurement has measured the judge, not the system.
+
+**The four-way contract.** Nothing about a judge is special-cased; it composes
+out of the existing seams:
+
+| Piece | Responsibility for a judge |
+|---|---|
+| `Provider` | Which model grades, what it costs, what it can do |
+| `Strategy` (`label_judge`) | The rubric, the closed label set, the output schema |
+| `Calibration` | The threshold, fitted at a target precision, fingerprinted to the three above |
+| `Expectation` | Routing, sampling, budget, skip semantics, both grains |
+
+The rubric and taxonomy are **strategy configuration, not code**, so one
+strategy grades any closed label set and the calibration is keyed to whatever
+it was fitted on. Baking a taxonomy into a strategy would make the calibration
+fingerprint a lie.
+
+**Gold never reaches the judge.** It rides on `ExtractionRecord.meta` and
+`ScorePayload` has no field to carry it. This is structural rather than a
+convention that reviewers must enforce: a judge cannot grade itself against the
+answer key because it is never handed one.
+
+**Grading the grader.** `expect_judge_agrees_with_gold` reports Cohen's kappa
+between the judge's flag and the human verdict. Raw agreement is reported
+beside it and never alone — on a skewed taxonomy a judge that approves
+everything agrees with humans 95% of the time while carrying no information,
+and only kappa says so. This check reads results other checks produced, which
+is why `Kind.DERIVED` exists: it is free, and it must run last.
+
+**What this does not solve.** A judge and a human annotator can be wrong in the
+same direction, particularly where the taxonomy itself is ambiguous — which
+§8.5 already says is the normal case. High kappa against a noisy gold set means
+the judge learned your annotation habits, not that either is correct. Treat
+inter-annotator disagreement as the signal that a category boundary needs
+fixing, before treating judge–human disagreement as a judge problem.
 
 ### 6.2 Scoring strategies
 
@@ -1776,7 +1827,67 @@ class ExpectFieldMatchesDimension(SyncExpectation):
 
 Set `blocking = True` if `check()` does heavy CPU work; it will be offloaded.
 
-### 15.4 A new strategy
+### 15.4 A judge-backed expectation for semantic correctness
+
+Four steps, none of which involve writing an expectation from scratch.
+
+**1. Configure the strategy** — the rubric and taxonomy are config:
+
+```yaml
+strategies:
+  my_judge:
+    plugin: label_judge
+    label_set: ["invoice", "receipt", "statement"]
+    rubric: |
+      Judge the document's type by what it is for, not by its layout.
+      If the document does not say, score near 0.5.
+```
+
+**2. Calibrate it** against human labels before it is allowed to block:
+
+```python
+cal = calibrate_judge(
+    id="doctype_v1",
+    decisions=[LabelledDecision(doc_id, "doc_type", score, predicted, gold), ...],
+    provider_id=p.id, model_version=p.model_version, strategy_id="label_judge",
+    target_precision=0.9,
+)
+FileCalibrationStore("calibrations").put(cal)
+```
+
+If it comes back with a threshold of 0.0 and a recall of 0.0, no cut achieves
+your target precision. Lower the target deliberately, or improve the judge —
+do not type a threshold.
+
+**3. Wire it up.** Subclass only if you want distinct vocabulary; the parent
+already does escalation, budget, skips and thresholds:
+
+```python
+@EXPECTATIONS.plugin("expect_doc_type_trustworthy")
+class ExpectDocTypeTrustworthy(ExpectFieldTrustworthy):
+    id = "expect_doc_type_trustworthy"
+    version = "1"
+    default_strategy = "my_judge"
+    field_evidence_kind = "doctype_verdict"
+    document_evidence_kind = "doctype_verdict_doc"
+```
+
+Override `default_strategy` rather than reading a strategy at the call site:
+the planner resolves the same attribute, so capability negotiation and the
+staleness guard validate against the strategy that will actually run.
+
+**4. Grade the grader** on any run where gold exists:
+
+```yaml
+- type: expect_judge_agrees_with_gold
+  fields: ["doc_type"]
+  min_kappa: 0.4
+```
+
+If you find yourself overriding `validate()`, stop — the divergence belongs in
+the parent, where the routing and skip semantics are tested once.
+
+### 15.5 A new strategy
 
 ```python
 @STRATEGIES.plugin("nli_entailment")
@@ -1795,7 +1906,7 @@ The most interesting unbuilt strategy. Groundedness via a small local
 entailment model costs approximately nothing per document and catches the
 dominant error class.
 
-### 15.5 A new aggregator
+### 15.6 A new aggregator
 
 ```python
 @AGGREGATORS.plugin("p10")

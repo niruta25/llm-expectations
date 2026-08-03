@@ -110,4 +110,11 @@ class Context:
     calibrations: dict[str, Any] = field(default_factory=dict)
     budget: Any | None = None
     prior: dict[tuple[str, str | None], bool] = field(default_factory=dict)
+    prior_results: list[Any] = field(default_factory=list)
+    """Every result produced by earlier steps, in tier order.
+
+    `prior` answers "is this field clean?" and is what the model tier routes
+    on. This is the full record, for DERIVED checks that need to read a
+    specific earlier expectation's verdicts rather than their conjunction.
+    """
     run_id: str = ""

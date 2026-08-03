@@ -10,7 +10,7 @@ from .base import (
     ModelProvider,
     cost_of,
 )
-from .mock import HTTPChatProvider, MockProvider
+from .mock import HTTPChatProvider, MockLabelJudge, MockProvider
 
 __all__ = [
     "CompletionRequest",
@@ -18,6 +18,7 @@ __all__ = [
     "CostModel",
     "HTTPChatProvider",
     "Limits",
+    "MockLabelJudge",
     "MockProvider",
     "ModelProvider",
     "cost_of",
