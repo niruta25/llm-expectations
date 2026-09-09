@@ -1,27 +1,30 @@
 [project]
 name = "llm-expectations"
-version = "0.1.0"
-description = "Pluggable data quality framework for LLM extractions"
+version = "0.0.0"
+description = "Quality checks for LLM outputs that are judgements about a document, not values copied out of one"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
-keywords = ["data-quality", "llm", "extraction", "expectations", "calibration"]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["llm", "evaluation", "llm-as-judge", "classification", "taxonomy", "data-quality"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
 ]
-dependencies = ["pyyaml>=6"]
 
-# Distribution name is `llm-expectations` for discoverability; the import name
-# is `llmex` so it is five characters at the top of every file. Same pattern as
-# beautifulsoup4 -> bs4 and scikit-learn -> sklearn.
+# None at 0.0.0. This release only reserves the name, and a placeholder has no
+# business pulling numpy into someone's environment. The real set arrives with
+# M0: pyyaml (config), httpx (provider calls), numpy (stats). See DESIGN.md §11.
+dependencies = []
+
 [project.optional-dependencies]
+# Input readers beyond jsonl/csv. Not needed by the core path.
+frames = ["pandas>=2", "pyarrow>=15"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
@@ -31,52 +34,15 @@ dev = [
     "types-PyYAML>=6",
 ]
 
+[project.scripts]
+llm-expectations = "llm_expectations.cli:main"
+
 [project.urls]
-Homepage = "https://github.com/llm-expectations/llm-expectations"
-Documentation = "https://github.com/llm-expectations/llm-expectations/blob/main/DESIGN.md"
-
-# Entry-point group names are public API. Every third-party plugin declares
-# against these; renaming after plugins exist breaks the whole ecosystem.
-# Core ships the entries below. Third-party distributions add their own under
-# the same groups and become available with no core changes.
-[project.entry-points."llmex.providers"]
-mock = "llmex.providers.mock:MockProvider"
-mock_judge = "llmex.providers.mock:MockLabelJudge"
-mock_pairwise = "llmex.providers.mock:MockPairwiseJudge"
-
-[project.entry-points."llmex.strategies"]
-single_judge = "llmex.strategies.builtin:SingleJudge"
-per_field_judge = "llmex.strategies.builtin:PerFieldJudge"
-diverse_ensemble = "llmex.strategies.builtin:DiverseEnsemble"
-logprob = "llmex.strategies.builtin:LogprobScore"
-label_judge = "llmex.strategies.judge:LabelJudge"
-
-[project.entry-points."llmex.expectations"]
-expect_field_grounded_in_source = "llmex.expectations.builtin:ExpectFieldGroundedInSource"
-expect_field_type = "llmex.expectations.builtin:ExpectFieldType"
-expect_fields_to_satisfy = "llmex.expectations.builtin:ExpectFieldsToSatisfy"
-expect_field_null_rate_between = "llmex.expectations.builtin:ExpectFieldNullRateBetween"
-expect_field_trustworthy = "llmex.expectations.builtin:ExpectFieldTrustworthy"
-expect_field_matches_gold = "llmex.expectations.classification:ExpectFieldMatchesGold"
-expect_label_distribution_stable = "llmex.expectations.classification:ExpectLabelDistributionStable"
-expect_extraction_label_trustworthy = "llmex.expectations.classification:ExpectExtractionLabelTrustworthy"
-expect_judge_agrees_with_gold = "llmex.expectations.classification:ExpectJudgeAgreesWithGold"
-
-[project.entry-points."llmex.aggregators"]
-harmonic = "llmex.aggregate:harmonic"
-weighted_harmonic = "llmex.aggregate:weighted_harmonic"
-arithmetic = "llmex.aggregate:arithmetic"
-minimum = "llmex.aggregate:minimum"
-
-[project.entry-points."llmex.sinks"]
-jsonl = "llmex.sinks:JsonlSink"
-console = "llmex.sinks:ConsoleSink"
-
-# M8. Declared now so the group name is settled before plugins exist.
-[project.entry-points."llmex.engines"]
+Homepage = "https://github.com/niruta25/llm-expectations"
+Design = "https://github.com/niruta25/llm-expectations/blob/main/DESIGN.md"
 
 [tool.setuptools.packages.find]
-include = ["llmex*"]
+include = ["llm_expectations*"]
 
 [tool.ruff]
 line-length = 100
@@ -88,11 +54,10 @@ select = ["E", "F", "I", "UP", "B", "S"]
 [tool.ruff.lint.per-file-ignores]
 # S101 asserts are the point of a test file; S311 pseudo-random is not crypto.
 "tests/*" = ["S101", "S311"]
-"demo.py" = ["S101", "E501"]
 
 [tool.mypy]
 strict = true
-files = ["llmex"]
+files = ["llm_expectations"]
 
 [[tool.mypy.overrides]]
 module = "tests.*"

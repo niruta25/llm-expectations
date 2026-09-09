@@ -17,17 +17,34 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      # The guards below keep CI green before M0 lands and make every step
+      # meaningful the moment the package and tests exist. Remove them once
+      # llm_expectations/ and tests/ are both present.
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          if [ -d llm_expectations ]; then
+            pip install -e ".[dev]"
+          else
+            pip install ruff mypy pytest
+          fi
+
       - name: Lint
         run: ruff check .
+
       - name: Typecheck
-        run: mypy llmex
-      - name: Test
-        run: pytest -q --cov=llmex --cov-report=term-missing
-      - name: Demos run offline
         run: |
-          python demo.py
-          python demo_jtbd.py
+          if [ -d llm_expectations ]; then
+            mypy llm_expectations
+          else
+            echo "no package yet — skipping"
+          fi
+
+      - name: Test
+        run: |
+          if [ -d tests ]; then
+            pytest -q --cov=llm_expectations --cov-report=term-missing
+          else
+            echo "no tests yet — skipping"
+          fi

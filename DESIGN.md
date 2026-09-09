@@ -1,2111 +1,1927 @@
-# llm-expectations — Design and Implementation Plan
+# llm-expectations — Design
 
-**A pluggable data quality framework for LLM extractions.**
+**A quality tool for LLM outputs that are judgements *about* a document, not values copied *out of* one.**
 
 | | |
 |---|---|
-| Distribution | `llm-expectations` on PyPI · import name `llmex` |
-| Status | Design approved, reference prototype exists (see Appendix A) |
-| Target | Python 3.10+, no warehouse dependency |
-| Scope | Quality checks over already-extracted structured data |
-| Non-scope | Extraction itself, prompt management, model serving |
+| Install | `pip install llm-expectations` |
+| Import | `import llm_expectations` |
+| Python | 3.10+ |
+| Dependencies | `pyyaml`, `httpx`, `numpy` |
 
 ---
 
-## Table of contents
+## Contents
 
-1. [Problem statement](#1-problem-statement)
-2. [Design principles](#2-design-principles)
-3. [Architecture](#3-architecture)
-4. [Domain model](#4-domain-model)
-5. [Plugin contracts](#5-plugin-contracts)
-6. [Built-in catalog](#6-built-in-catalog)
-7. [Execution model](#7-execution-model)
-8. [Calibration subsystem](#8-calibration-subsystem)
-9. [Configuration reference](#9-configuration-reference)
-10. [Persistence and result schema](#10-persistence-and-result-schema)
-11. [Repository layout](#11-repository-layout)
-12. [Implementation plan](#12-implementation-plan)
-13. [Testing strategy](#13-testing-strategy)
-14. [Operations](#14-operations)
-15. [Extension cookbook](#15-extension-cookbook)
-16. [Non-goals and known limitations](#16-non-goals-and-known-limitations)
-17. [Open questions](#17-open-questions)
-- [Appendix A — prototype status](#appendix-a--prototype-status)
-- [Appendix B — glossary](#appendix-b--glossary)
+1. [Metrics and settings](#1-metrics-and-settings)
+2. [Core model](#2-core-model)
+3. [Inputs and outputs](#3-inputs-and-outputs)
+4. [The shared engine](#4-the-shared-engine)
+5. [Assigned fields](#5-assigned-fields)
+6. [Judges](#6-judges)
+7. [Free text fields](#7-free-text-fields)
+8. [Taxonomy](#8-taxonomy)
+9. [Guardrails](#9-guardrails)
+10. [Config and report](#10-config-and-report)
+11. [Repo layout and build order](#11-repo-layout-and-build-order)
+12. [v1 — what we are not building yet](#12-v1--what-we-are-not-building-yet)
 
 ---
 
-## 1. Problem statement
+## The problem
 
-### 1.1 What breaks when you point warehouse DQ at LLM output
+A model reads a document and produces structured output. Some of that output is
+**copied from** the document — an amount, a date, a name. You can check those by
+searching the text.
 
-Great Expectations, dbt tests, Soda and every other data quality framework
-rest on three assumptions. All three fail for LLM extractions.
+But most interesting LLM output is **about** the document:
 
-**Assumption 1: there is a reconcilable source of truth.**
-In ETL you can count rows against the upstream system, checksum a file, or
-join to a dimension. For an extraction, the "correct" value exists only inside
-prose that a human would have to read. There is nothing to reconcile against.
+```
+   jtbd      billing.payment_failed        a label chosen from a taxonomy
+   summary   "Maya's card was declined."    a sentence written about the item
+   outcome   resolved                       a judgement on what happened
+```
 
-**Assumption 2: the transformation is deterministic and versioned by code.**
-An extractor is a stochastic function whose behaviour changes when the model
-changes, when the prompt changes, when the temperature changes, and sometimes
-for no visible reason at all. A prompt edit is a silent schema change that no
-diff tool will flag.
+None of that appears in the source text. Searching for it tells you nothing.
+Existing data-quality tools assume you can reconcile a value against something;
+here there is nothing to reconcile against.
 
-**Assumption 3: malformation is the failure mode.**
-Structured-output APIs guarantee syntactically valid JSON conforming to the
-declared schema. Every structural test passes while the values are wrong. The
-failure mode is *plausibility*, not malformation — a fabricated vendor name is
-a perfectly well-typed string.
+This tool covers those two kinds of field, and does it without pretending to
+certainty it has not earned.
 
-### 1.2 The grain problem
+### Three kinds of field
 
-This is the single most consequential design input, and it is empirically
-established rather than a matter of taste.
+```
+   ┌─── ASSIGNED ──────────────┐  ┌─── FREE TEXT ─────────────┐
+   │  a label from a taxonomy   │  │  a sentence about the item │
+   │  jtbd, intent, outcome,    │  │  summary, reason,          │
+   │  sentiment, priority       │  │  next action               │
+   │                            │  │                            │
+   │  one right answer          │  │  no single right answer    │
+   │  → compare to it           │  │  → hunt for defects        │
+   └────────────────────────────┘  └────────────────────────────┘
 
-Published 2026 benchmarks on frontier models doing structured extraction
-report these paired numbers on identical data:
+   ┌─── COPIED ────────────────┐
+   │  a value in the document   │   v1 — the seam is ready,
+   │  amount, date, vendor      │   not built yet
+   └────────────────────────────┘
+```
 
-| Task | Field accuracy | Document accuracy |
+The kind is declared once per field. Everything else follows from it.
+
+---
+
+## 1. Metrics and settings
+
+### Two gates before any quality number is reported
+
+```
+   ┌──────────────────────────────────────────────┐
+   │  GATE 1   Can I trust the measurement?       │
+   │           If this fails, every number below   │
+   │           is meaningless. Stop and fix.       │
+   └────────────────────┬─────────────────────────┘
+                        │ pass
+   ┌────────────────────▼─────────────────────────┐
+   │  GATE 2   Is the judge better than nothing?  │
+   │           If it loses to a trivial baseline,  │
+   │           you are paying for noise.           │
+   └────────────────────┬─────────────────────────┘
+                        │ pass
+   ┌────────────────────▼─────────────────────────┐
+   │  QUALITY   Now the real numbers mean something│
+   └──────────────────────────────────────────────┘
+```
+
+### Gate 1 — is the measurement trustworthy?
+
+Always on, free, and each catches a failure that otherwise produces a confident
+wrong number.
+
+| Metric | Default setting | Why |
 |---|---|---|
-| PII extraction | 0.966 – 0.979 | 0.260 – 0.460 |
-| Financial entity extraction | 0.887 – 0.949 | 0.422 – 0.700 |
-| Insurance claim extraction | 0.750 – 0.775 | 0.300 – 0.400 |
-
-Document accuracy counts a document as wrong if *any* field is wrong. A system
-at 97% field accuracy is at 26% document accuracy. If downstream consumers need
-whole records — and they almost always do — reporting field pass-rates is
-actively misleading.
-
-Two consequences flow directly into the design:
-
-- The framework reports at **both grains**, always, for every check.
-- Field-to-document rollup defaults to a **soft minimum** (harmonic mean),
-  not an average. Nineteen fields at 0.99 and one at 0.02 averages to 0.94
-  (reads healthy) and harmonises to 0.29 (reads broken — which it is).
-
-### 1.3 The verification economics problem
-
-A model-based check costs roughly what the extraction cost. You cannot run
-one on every record and call it quality assurance; you have built a second
-pipeline with the same reliability profile as the first.
-
-The framework therefore treats **cost as a first-class dimension**: every check
-declares its kind, the planner estimates spend before executing, and a budget
-guard degrades gracefully. "Degrades gracefully" specifically means marking
-results *unscored*, never passing them.
-
-### 1.4 The trust-laundering problem
-
-An LLM judging an LLM's output is an opinion, not a measurement, until you
-have shown that its scores rank wrong extractions above right ones. The
-framework makes this structural rather than advisory: **a model-based
-expectation with blocking severity and no calibration is a configuration
-error that fails at plan time.**
-
-### 1.5 What good looks like
-
-A run produces, for every `(document, field)` and every `(document)`:
-
-- a verdict (pass / fail / deliberately unscored)
-- a score where one is meaningful, with the threshold and its provenance
-- evidence explaining the verdict (a span, a ratio, a judge explanation)
-- the cost incurred
-- the exact function that produced it (model, prompt version, strategy)
-
-and a manifest pinning the entire run so two runs can be compared.
-
----
-
-## 2. Design principles
-
-Each principle states the rule, why it exists, and what it forces.
-
-### P1 — Async core, sync shims
-
-`Expectation.validate` is `async def`. Providers are IO-bound and concurrency
-is the entire performance story.
-
-**Forces:** two ergonomic escape hatches so simple checks stay simple —
-`SyncExpectation.check()` for a normal method, and `@field_check` for a single
-function. Both are wrapped into the async contract by the base class. The
-runner only ever awaits. A `blocking=True` flag routes CPU-heavy sync checks
-through `asyncio.to_thread`.
-
-### P2 — Observe-only
-
-The framework never invokes the extractor. A `Batch` carries records that
-already exist plus a resolver for their source documents.
-
-**Forces:** composes with any extraction stack. Costs us
-`expect_extraction_consistent_across_samples`, which needs re-generation; that
-is scoped as an opt-in hook, not smuggled into the core.
-
-### P3 — Python-native, warehouse-optional
-
-No database required to run. SQL pushdown is an execution-engine plugin, not
-the foundation.
-
-**Forces:** the deterministic tier must be implementable in pure Python first.
-Pushdown becomes an optimisation with an equivalence test against the Python
-path.
-
-### P4 — Both grains, always
-
-Every check reports at field grain and document grain.
-
-**Forces:** the `Result` type carries `grain` plus a nullable `field_name`.
-Expectations that compute their own document score (model-based ones do, via
-the strategy) own it; everything else gets a rollup synthesised by the runner.
-The runner must dedupe on `(expectation_id, doc_id)` or it double-reports.
-
-### P5 — Three result states, not two
-
-`success` is `True`, `False`, or `None`. `None` means *deliberately unscored*:
-sampled out, budget capped, provider errored, not applicable.
-
-**Forces:** without it, dropped coverage is indistinguishable from a pass and
-the quality signal silently rots. Budget exhaustion must never convert a run
-to green.
-
-### P6 — Provider and strategy are orthogonal
-
-A **provider** knows transport, auth, tokens and money. A **strategy** knows
-how to interrogate a model. Neither knows about the other's concerns.
-
-**Forces:** you can A/B a cheap verifier against an expensive one without
-touching any expectation, and reuse the five-call ensemble on a local model.
-If an expectation hardcodes a model, both become impossible.
-
-### P7 — Fail at plan time, not run time
-
-Capability gaps, missing calibrations, stale calibrations and misconfigured
-aliases are detected before a single token is spent.
-
-**Forces:** providers must declare capabilities declaratively; strategies must
-declare requirements; the planner performs set-difference negotiation.
-
-### P8 — Thresholds are derived, never typed
-
-A threshold comes from a calibration fitted at a target precision against
-labelled examples.
-
-**Forces:** `Calibration` is a first-class persisted object with a fingerprint
-over `(gold_set_hash, provider, model_version, strategy)`. Any drift in those
-invalidates it.
-
-### P9 — Evidence over booleans
-
-Every result carries structured evidence: the matched span, the fuzzy ratio,
-the closest source text, the judge's explanation, the aggregation used, the
-weakest field.
-
-**Forces:** an `Evidence` type on every result path, including skips. A red
-dashboard nobody can action is worse than no dashboard.
-
-### P10 — Cheap tiers gate expensive tiers
-
-Deterministic checks run first; their verdicts feed the model tier's routing
-decision.
-
-**Forces:** the runner threads prior results into `Context.prior`, and the
-model-based expectation escalates suspect documents plus a random audit
-stratum of clean ones. The audit stratum is the only thing that tells you
-whether the cheap gates work.
-
----
-
-## 3. Architecture
-
-### 3.1 Layers
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│  Interface        YAML suite  ·  Python API  ·  CLI          │
-├──────────────────────────────────────────────────────────────┤
-│  Orchestration    Planner ──> Runner ──> Sinks               │
-│                   (guards, cost)  (tiers, budget, cache)     │
-├──────────────────────────────────────────────────────────────┤
-│  Contracts        Expectation · Provider · Strategy ·        │
-│                   Aggregator · Sink · ExecutionEngine        │
-├──────────────────────────────────────────────────────────────┤
-│  Domain           Batch · ExtractionRecord · SourceDoc ·     │
-│                   Result · Cost · Evidence · Provenance      │
-└──────────────────────────────────────────────────────────────┘
-```
-
-Dependencies point downward only. Domain imports nothing from the framework.
-Contracts import domain. Orchestration imports contracts. Interface imports
-orchestration. A circular import means a layering mistake.
-
-### 3.2 Request lifecycle
-
-```
-Batch (records + lazy source resolver)
-   │
-   ├─> Planner
-   │      capability negotiation      → PlanError on gap
-   │      calibration guard           → PlanError if blocking + uncalibrated
-   │      staleness guard             → PlanError if calibration fingerprint drifted
-   │      correlated-verifier check   → warning
-   │      cost estimation             → warning if over budget
-   │      tier ordering               → deterministic, statistical, model_based
-   │
-   ├─> Runner
-   │      for each step in tier order:
-   │        deterministic/statistical → run, merge verdicts into ctx.prior
-   │        model_based               → route by ctx.prior + audit_rate
-   │                                     reserve budget → strategy.score()
-   │                                     → provider.complete() × N in parallel
-   │      rollup field → document for checks that did not self-score
-   │
-   └─> RunResult(results, cost, manifest, warnings) ──> Sinks
-```
-
-### 3.3 The six plugin seams
-
-| Seam | Entry-point group | Swaps | Ships with core |
-|---|---|---|---|
-| Expectation | `llmex.expectations` | Check types | 5 built-ins |
-| Provider | `llmex.providers` | Model transport + capabilities | `mock`, `HTTPChatProvider` base |
-| Strategy | `llmex.strategies` | How you interrogate a model | 4 built-ins |
-| Aggregator | `llmex.aggregators` | Field→document semantics | 4 built-ins |
-| Sink | `llmex.sinks` | Result destinations | `console`, `jsonl` |
-| Execution engine | `llmex.engines` | Where deterministic checks run | `python` (M2), `sql` (M8) |
-
-Registration is via `importlib.metadata` entry points, the same mechanism dbt
-uses for adapters. `pip install llmex-anthropic` makes a provider available with
-zero core changes. An in-process `register()` path exists for tests and
-notebooks; both resolve through the same lookup so core code never branches
-on origin.
-
-### 3.4 Why provider ≠ strategy, concretely
-
-```python
-# WRONG — model baked into the check
-class ExpectTrustworthy:
-    async def validate(self, batch, ctx):
-        resp = await openai.chat(model="gpt-5", messages=[...])
-
-# RIGHT — three independent axes
-expectation = ExpectFieldTrustworthy(provider="cheap", strategy="ensemble",
-                                     calibration="invoices_v1")
-```
-
-With the second form, swapping `gpt-4.1-mini` for a local Qwen is a one-line
-YAML change, and comparing `single_judge` against `diverse_ensemble` on the
-same provider is another. With the first, both require code edits and the
-calibration cannot be keyed to what actually produced the score.
-
----
-
-## 4. Domain model
-
-All domain types are dataclasses with no framework dependencies. They must be
-JSON-serialisable via `.as_dict()` where they cross a boundary.
-
-### 4.1 Enumerations
-
-```python
-class Kind(str, Enum):
-    DETERMINISTIC = "deterministic"   # pure function of the data, free
-    STATISTICAL   = "statistical"     # aggregate over the batch, cheap
-    MODEL_BASED   = "model_based"     # costs money, non-deterministic
-
-class Grain(str, Enum):
-    FIELD    = "field"        # one (doc_id, field_name)
-    DOCUMENT = "document"     # one doc_id, all its fields
-    CORPUS   = "corpus"       # the whole batch
-
-class Severity(str, Enum):
-    ERROR = "error"   # blocking
-    WARN  = "warn"    # reported, non-blocking
-    INFO  = "info"    # informational only
-
-class Capability(str, Enum):
-    STRUCTURED_OUTPUT = "structured_output"
-    LOGPROBS          = "logprobs"
-    SYSTEM_PROMPT     = "system_prompt"
-    BATCH_API         = "batch_api"
-    EMBEDDINGS        = "embeddings"
-
-class SkipReason(str, Enum):
-    BUDGET_EXHAUSTED = "budget_exhausted"
-    SAMPLED_OUT      = "sampled_out"
-    UPSTREAM_FAILED  = "upstream_failed"
-    PROVIDER_ERROR   = "provider_error"
-    NOT_APPLICABLE   = "not_applicable"
-```
-
-`Kind` drives tier ordering and budget treatment. `Grain` drives reporting.
-`Capability` drives plan-time negotiation. `SkipReason` makes the `None`
-verdict state auditable.
-
-### 4.2 Value types
-
-```python
-@dataclass
-class Cost:
-    usd: float = 0.0
-    calls: int = 0
-    tokens_in: int = 0
-    tokens_out: int = 0
-    latency_ms: float = 0.0    # NB: __add__ takes max(), not sum() — parallel
-    cache_hits: int = 0
-```
-
-`Cost.__add__` sums everything except latency, which takes the maximum,
-because verifier calls run in parallel. Summing latency across an ensemble
-would report 5× the wall-clock truth.
-
-```python
-@dataclass
-class Evidence:
-    kind: str = "none"          # "exact_match" | "fuzzy_match" | "trust_score" | ...
-    detail: dict = {}           # kind-specific payload
-
-@dataclass
-class Provenance:
-    expectation_id: str
-    expectation_version: str
-    provider_id: str | None = None
-    model_version: str | None = None
-    strategy_id: str | None = None
-    prompt_version: str | None = None
-```
-
-`prompt_version` is the field teams omit and then cannot debug. It must be
-carried from the extraction record through to every result. Treat
-`(model, prompt, schema)` as one versioned artifact: a change to any of them
-means historical rows were produced by a different function and are not
-comparable. This is an SCD problem wearing a new hat.
-
-### 4.3 Batch and records
-
-```python
-@dataclass(frozen=True)
-class SourceDoc:
-    doc_id: str
-    text: str
-    meta: dict = {}
-
-@dataclass(frozen=True)
-class ExtractionRecord:
-    doc_id: str
-    field_name: str
-    value: object
-    span: tuple[int, int] | None = None
-    prompt_version: str | None = None
-    generator_model: str | None = None
-    extraction_id: str | None = None
-    meta: dict = {}
-```
-
-`span` is optional but enormously valuable: when present, groundedness becomes
-an O(1) slice comparison instead of an O(n) window scan, and it verifies the
-model extracted from the location it claimed.
-
-```python
-class Batch:
-    def __init__(self, records, source_resolver: Callable[[str], SourceDoc],
-                 schema: dict | None = None)
-    def source(self, doc_id) -> SourceDoc          # memoised
-    def by_document(self) -> dict[str, list[ExtractionRecord]]
-    def for_fields(self, names: list[str]) -> list[ExtractionRecord]   # ["*"] = all
-    @property doc_ids -> list[str]                 # insertion-ordered
-    @property field_names -> list[str]
-```
-
-The resolver is a **callable, not a dict**, so a batch can span a corpus that
-does not fit in memory. Resolved docs are cached for the batch's lifetime.
-`doc_ids` and `field_names` preserve insertion order for deterministic output.
-
-### 4.4 Context
-
-```python
-@dataclass
-class Context:
-    providers: dict[str, ModelProvider]
-    strategies: dict[str, ScoringStrategy]
-    calibrations: dict[str, Calibration]
-    budget: Budget | None
-    prior: dict[tuple[str, str], bool]   # (doc_id, field) -> passed all cheap checks
-    run_id: str
-```
-
-`prior` is the mechanism behind P10. Deterministic steps write into it; the
-model tier reads it to decide escalation.
-
-### 4.5 Result
-
-```python
-@dataclass
-class Result:
-    expectation_id: str
-    grain: Grain
-    doc_id: str
-    field_name: str | None = None      # None for DOCUMENT/CORPUS grain
-
-    success: bool | None = None
-    score: float | None = None
-    threshold: float | None = None
-    threshold_source: str = "manual"   # "manual" | "calibration:{id}@{fingerprint}"
-
-    severity: Severity = Severity.ERROR
-    observed: object = None
-    evidence: Evidence = Evidence()
-    cost: Cost = Cost()
-    provenance: Provenance | None = None
-    skip_reason: SkipReason | None = None
-
-    @property blocking_failure -> bool   # success is False and severity is ERROR
-```
-
-`threshold_source` is what makes an audit possible. A reviewer can see at a
-glance whether a number was defended by a calibration or typed by someone.
-
-```python
-@dataclass
-class RunResult:
-    run_id: str
-    results: list[Result]
-    cost: Cost
-    manifest: dict
-    warnings: list[str]
-
-    def failures(self) -> list[Result]
-    def unscored(self) -> list[Result]
-    def summary(self) -> dict     # counts by grain, blocking failures, cost
-```
-
----
-
-## 5. Plugin contracts
-
-### 5.1 Registry
-
-```python
-class Registry:
-    def __init__(self, group: str)                 # entry-point group name
-    def register(self, name: str, obj) -> obj      # in-process
-    def plugin(self, name: str)                    # decorator form
-    def get(self, name: str)                       # local first, then entry points
-    def names(self) -> list[str]                   # union, sorted
-
-PROVIDERS    = Registry("llmex.providers")
-STRATEGIES   = Registry("llmex.strategies")
-EXPECTATIONS = Registry("llmex.expectations")
-AGGREGATORS  = Registry("llmex.aggregators")
-SINKS        = Registry("llmex.sinks")
-ENGINES      = Registry("llmex.engines")        # M8
-```
-
-Entry-point discovery is wrapped in a bare `except` and cached. A broken
-third-party plugin must not prevent the framework from importing; it should
-surface as a missing name with a helpful `available: [...]` message.
-
-### 5.2 Expectation
-
-```python
-class Expectation(ABC):
-    id: str                                       # "expect_field_grounded_in_source"
-    version: str                                  # bump on semantic change
-    kind: Kind
-    grain: Grain
-    required_capabilities: frozenset[Capability] = frozenset()
-
-    def __init__(self, severity: Severity = Severity.ERROR, **config)
-    def estimate_calls(self, batch: Batch) -> int          # 0 for deterministic
-    @abstractmethod
-    async def validate(self, batch: Batch, ctx: Context) -> list[Result]
-```
-
-Returns a **list**, always — a field-grain check over a batch produces many
-results, and a uniform return type keeps the runner simple.
-
-`version` is not decoration. When you change what a check means, bump it; the
-manifest records it, and two runs with different expectation versions are not
-comparable even if the suite name matches.
-
-#### Sync shim (P1)
-
-```python
-class SyncExpectation(Expectation):
-    blocking: bool = False           # True → asyncio.to_thread
-
-    @abstractmethod
-    def check(self, batch: Batch, ctx: Context) -> list[Result]
-
-    async def validate(self, batch, ctx):
-        if self.blocking:
-            return await asyncio.to_thread(self.check, batch, ctx)
-        return self.check(batch, ctx)
-```
-
-#### One-function shim
-
-```python
-@field_check(id="expect_currency_iso4217", fields=["currency"])
-def currency_is_iso(rec, batch, ctx):
-    ok = rec.value in {"USD", "EUR", "GBP", "CAD"}
-    return ok, Evidence("enum", {"got": rec.value})
-```
-
-The function returns `bool` or `(bool, Evidence)`. The decorator generates a
-`SyncExpectation` subclass and registers it.
-
-**Implementation note (learned the hard way):** the generated class must be
-built with `type(name, bases, namespace)` including `check` in the namespace.
-Assigning `cls.check = fn` *after* class creation leaves `__abstractmethods__`
-populated and instantiation fails with `Can't instantiate abstract class`.
-
-### 5.3 Model provider
-
-```python
-@dataclass(frozen=True)
-class CostModel:
-    usd_per_1k_in: float = 0.0
-    usd_per_1k_out: float = 0.0
-    def price(self, tokens_in: int, tokens_out: int) -> float
-
-@dataclass(frozen=True)
-class Limits:
-    max_concurrency: int = 8
-    requests_per_minute: int | None = None
-    max_context_tokens: int = 128_000
-
-@dataclass
-class CompletionRequest:
-    user: str
-    system: str | None = None
-    json_schema: dict | None = None
-    temperature: float = 0.0
-    max_tokens: int = 1024
-    want_logprobs: bool = False
-    tag: str = ""            # which strategy template issued this — for debugging
-
-@dataclass
-class CompletionResponse:
-    text: str = ""
-    parsed: dict | None = None
-    tokens_in: int = 0
-    tokens_out: int = 0
-    latency_ms: float = 0.0
-    logprobs: list[float] | None = None
-    meta: dict = {}
-
-@runtime_checkable
-class ModelProvider(Protocol):
-    id: str
-    model_version: str
-    capabilities: frozenset[Capability]
-    cost: CostModel
-    limits: Limits
-    async def complete(self, req: CompletionRequest) -> CompletionResponse: ...
-```
-
-A provider knows **nothing** about expectations, scores or thresholds. That is
-the whole point. `tag` exists so that when an ensemble disagrees you can tell
-which framing produced which score.
-
-### 5.4 Scoring strategy
-
-```python
-@dataclass
-class ScorePayload:
-    doc_id: str
-    source_text: str
-    extraction: dict[str, object]
-    schema: dict = {}
-    instructions: str = ""
-
-@dataclass
-class ScoreSet:
-    doc_score: float
-    field_scores: dict[str, float]
-    explanations: dict[str, str] = {}
-    cost: Cost = Cost()
-    n_calls_used: int = 0
-    n_calls_dropped: int = 0
-
-@runtime_checkable
-class ScoringStrategy(Protocol):
-    id: str
-    required_capabilities: frozenset[Capability]
-    def estimate_calls(self, n_fields: int) -> int
-    async def score(self, payload: ScorePayload, provider) -> ScoreSet: ...
-```
-
-`n_calls_dropped` surfaces timeout-discarded ensemble members. If it is
-consistently non-zero, either the timeout is too tight or the provider is
-degraded — both worth knowing and invisible otherwise.
-
-### 5.5 Aggregator
-
-```python
-Aggregator = Callable[[Mapping[str, float] | Sequence[float], dict | None], float]
-```
-
-Must accept **either** a mapping of field→score or a bare sequence. The runner
-passes a mapping so weighted variants can see field names; unweighted variants
-must not choke on it. (This is a real bug the prototype's tests caught: naive
-`for s in scores` over a dict iterates keys.)
-
-### 5.6 Sink
-
-```python
-class Sink(Protocol):
-    async def emit(self, run: RunResult) -> None: ...
-```
-
-Async so that warehouse and HTTP sinks are drop-in.
-
-### 5.7 Execution engine (M8)
-
-```python
-class ExecutionEngine(Protocol):
-    id: str
-    def can_pushdown(self, expectation: Expectation) -> bool
-    async def execute(self, expectation, batch, ctx) -> list[Result]
-```
-
-Deferred to M8. The contract is stated now so the deterministic tier is written
-without assuming in-process Python execution.
-
----
-
-## 6. Built-in catalog
-
-Naming follows the Great Expectations convention so the vocabulary is
-learnable. Semantics differ where they must.
-
-### 6.1 Expectations
-
-| id | kind | grain | Cost | Catches |
-|---|---|---|---|---|
-| `expect_field_type` | deterministic | field | free | Type/nullability violations |
-| `expect_field_grounded_in_source` | deterministic | field | free | Fabricated values |
-| `expect_fields_to_satisfy` | deterministic | document | free | Cross-field rule violations |
-| `expect_field_null_rate_between` | statistical | corpus | free | Silent drift, extraction collapse |
-| `expect_field_trustworthy` | model_based | field + document | $$ | Plausible-but-wrong values |
-| `expect_field_matches_gold` | deterministic | field | free | Wrong labels, where a human labelled |
-| `expect_label_distribution_stable` | statistical | corpus | free | Collapse onto one label, distribution drift |
-| `expect_extraction_label_trustworthy` | model_based | field + document | $$ | Wrong labels, where nobody labelled |
-| `expect_judge_agrees_with_gold` | derived | corpus | free | A judge that is not worth listening to |
-
-#### `expect_field_grounded_in_source`
-
-**The highest-value check in the framework, and it costs nothing.** If a value
-cannot be located in the source text, the model invented it.
-
-Config: `fields` (list or `["*"]`), `min_ratio` (default 0.92),
-`allow_null` (default true).
-
-Resolution order:
-1. Null/empty → pass if `allow_null`, evidence `null_value`
-2. Exact substring match → pass, evidence `exact_match`, score 1.0
-3. `span` present → compare `source[start:end]` against the value with
-   `SequenceMatcher`, evidence `span_match` including the quoted source
-4. Otherwise → sliding-window fuzzy scan, evidence `fuzzy_match` including
-   `closest_source_text`
-
-The window scan steps by `len(needle)//3` and short-circuits on a perfect
-match. This is O(n·m) in the worst case; for large documents M6 should add an
-n-gram index prefilter.
-
-**Design note.** There is academic work (anchor-constrained extraction) that
-pushes this further upstream: build an inventory of all meaningful spans
-*before* extraction so the model can only select from a closed set. That is an
-extraction-side intervention and out of scope under P2, but it is the correct
-long-term fix and worth flagging to whoever owns the extractor. Published
-hallucination rates span 0.23%–20.23% across model/dataset configurations —
-a two-order-of-magnitude spread, meaning this is a per-field, per-model
-property you must measure rather than assume.
-
-#### `expect_field_type`
-
-Config: `types` (`{field: json_type}`), `nullable` (list).
-
-Cheap, and it almost always passes when the extractor uses structured-output
-mode — which is exactly why it is necessary but nowhere near sufficient. Keep
-it for the case where someone swaps to a non-constrained decode path.
-
-#### `expect_fields_to_satisfy`
-
-Config: `expression` (Python expression over the document's fields),
-`label` (human name).
-
-Document-grain cross-field rule. Sums, date ordering, referential rules,
-currency enums.
-
-**Security note.** The prototype uses `eval` with `{"__builtins__": {}}`. That
-is adequate for a trusted config file and inadequate for anything user-supplied.
-M7 must replace it with a restricted AST evaluator (walk the tree, allow only
-`Compare`, `BoolOp`, `BinOp`, `Name`, `Constant`, `Subscript`; reject
-everything else). Track as a hard blocker for any multi-tenant deployment.
-
-**Design guidance.** Fields requiring computation are not extraction fields.
-If a value is derived — a total, a duration, an inferred end date — pull it out
-of the model's job and compute it in this layer from extracted primitives. You
-get determinism, testability, and a smaller surface for the expensive tier.
-
-#### `expect_field_null_rate_between`
-
-Config: `min_rate` (0.0), `max_rate` (1.0).
-
-Corpus-grain silent-degradation detector. Group by `prompt_version` in the sink
-and a regression stops being "quality dropped" and becomes "quality dropped
-when we shipped prompt v7."
-
-M5 should add siblings: `expect_field_cardinality_stable`,
-`expect_value_distribution_similar_to_baseline`.
-
-#### `expect_field_trustworthy`
-
-Config: `provider`, `strategy`, `calibration`, `audit_rate` (0.05),
-`threshold` (fallback, manual), `seed`.
-
-Routes documents to a verifier and **emits results at both grains from a
-single pass** — field scores from `ScoreSet.field_scores`, document score from
-`ScoreSet.doc_score`.
-
-Sampling: escalate a document if any of its fields already failed a cheap
-check (`ctx.prior`), OR with probability `audit_rate`. The audit stratum is
-what tells you whether the cheap gates work at all.
-
-Skip paths, all producing `success=None` with a `SkipReason`:
-`SAMPLED_OUT`, `BUDGET_EXHAUSTED`, `PROVIDER_ERROR`.
-
-#### Evaluating extraction quality with LLM judges
-
-Classification is the one task where the framework's central problem — that
-there is nothing to reconcile against — partly dissolves. A human can say
-whether a label is right, exactly and cheaply. That changes what a judge is
-for, and the design follows the change rather than fighting it.
-
-**A judge earns its place only where gold does not exist.** Where a label has
-been annotated, `expect_field_matches_gold` answers the question outright for
-nothing. The judge covers the rest of the corpus, which in production is all of
-it. Any suite that runs a judge over labelled data and reports the result as a
-quality measurement has measured the judge, not the system.
-
-**The four-way contract.** Nothing about a judge is special-cased; it composes
-out of the existing seams:
-
-| Piece | Responsibility for a judge |
+| Judge approval rate | warn outside **15–85%**, fail outside **2–98%** | Catches a rubber-stamp judge. A judge approving 99% passes every other check ever written. |
+| Unparseable / empty replies | warn **> 2%**, fail **> 5%** | Above this you measured your fallback, not the model. Never default them — exclude and count. |
+| Which items failed to parse | report the breakdown | Empty replies cluster on hard items. That biases everything. |
+| Minority class size | need **≥ 30 items and ≥ 5%** | Below this any AUC is noise with a tight-looking interval. |
+| Panel effective votes | flag when **n_eff / m < 0.5** | Three judges giving 1.1 opinions means you pay 3× for nothing. |
+| Signal uses human labels? | boolean, must be **false** | A triage signal that peeks at the answer scores beautifully and is useless in production. |
+| Sample size | see below | A small sample gives an interval so wide it cannot say anything. |
+
+**Minimum sample sizes:**
+
+| What you want | Minimum | Comfortable |
+|---|---|---|
+| Distribution / drift | 200 | 500 |
+| Accuracy on one label | 30 per label | 100 per label |
+| Any AUC or ranking claim | 200 | 500 |
+| Judge comparison | 200 | 500 |
+
+Below the minimum, the number is reported **with its interval and a line saying
+it cannot support a conclusion.**
+
+### Gate 2 — is the judge better than nothing?
+
+Every judge is compared to the dumb options on the same target.
+
+| Baseline | What it is |
 |---|---|
-| `Provider` | Which model grades, what it costs, what it can do |
-| `Strategy` (`label_judge`) | The rubric, the closed label set, the output schema |
-| `Calibration` | The threshold, fitted at a target precision, fingerprinted to the three above |
-| `Expectation` | Routing, sampling, budget, skip semantics, both grains |
+| random | 0.5 |
+| always-approve | a judge that never flags anything |
+| majority label | always guess the most common label |
+| item length | longer items = more errors? |
 
-The rubric and taxonomy are **strategy configuration, not code**, so one
-strategy grades any closed label set and the calibration is keyed to whatever
-it was fitted on. Baking a taxonomy into a strategy would make the calibration
-fingerprint a lie.
+**Rule: the judge's number and every baseline appear side by side, always.**
 
-**Gold never reaches the judge.** It rides on `ExtractionRecord.meta` and
-`ScorePayload` has no field to carry it. This is structural rather than a
-convention that reviewers must enforce: a judge cannot grade itself against the
-answer key because it is never handed one.
+```
+   triage judge risk score     AUC 0.84    ← usable
+   item length                 AUC 0.48
+   random                      AUC 0.50
+```
 
-**Grading the grader.** `expect_judge_agrees_with_gold` reports Cohen's kappa
-between the judge's flag and the human verdict. Raw agreement is reported
-beside it and never alone — on a skewed taxonomy a judge that approves
-everything agrees with humans 95% of the time while carrying no information,
-and only kappa says so. This check reads results other checks produced, which
-is why `Kind.DERIVED` exists: it is free, and it must run last.
+### Quality metrics — assigned fields
 
-**What this does not solve.** A judge and a human annotator can be wrong in the
-same direction, particularly where the taxonomy itself is ambiguous — which
-§8.5 already says is the normal case. High kappa against a noisy gold set means
-the judge learned your annotation habits, not that either is correct. Treat
-inter-annotator disagreement as the signal that a category boundary needs
-fixing, before treating judge–human disagreement as a judge problem.
+**Mode 0 — no human labels**
 
-### 6.2 Scoring strategies
+| Metric | Default | Reads as broken when |
+|---|---|---|
+| Label in taxonomy | expect 100% | anything below — the model invented a label |
+| Largest label share | warn **> 50%** | the model collapsed onto one label |
+| Abstention rate | warn outside **1–20%** | too high: taxonomy has gaps. too low: forcing labels. |
+| Drift vs last run | warn on **> 10pp** move | something changed silently |
+| Disagreement by label pair | top 5 reported | one pair carrying most disagreement = taxonomy bug |
+| Stability on rerun | warn **< 90%** | the model flips its own answers |
+| Triage risk score | the ranking output | this is the deliverable |
 
-| id | Calls/doc | Requires | Notes |
-|---|---|---|---|
-| `logprob` | 0 | `LOGPROBS` | Free but unavailable on many APIs and poorly calibrated |
-| `single_judge` | 1 | `STRUCTURED_OUTPUT` | Weakest — a holistic judge systematically overlooks individual fields |
-| `per_field_judge` | n fields | `STRUCTURED_OUTPUT` | Best per-field recall; dies on 50+ field schemas via token rate limits |
-| `diverse_ensemble` | ~5 | `STRUCTURED_OUTPUT` | Best measured accuracy/cost point |
+**Mode 1 — with human labels**
 
-#### `diverse_ensemble` in detail
-
-Five parallel calls with deliberately **different** framings. Diversity is the
-mechanism — identical prompts reproduce the same blind spot five times.
-
-| tag | framing |
+| Metric | Note |
 |---|---|
-| `holistic` | Argue why the extraction might be wrong, then rate each field |
-| `strict` | Treat unverifiable or partially correct values as wrong |
-| `grounding` | Decide whether each value appears in the source |
-| `omission` | Look for information in the source missing from the extraction |
-| `format` | Check type, format and normalisation against the schema |
+| Macro F1 | the headline |
+| Accuracy | never reported alone |
+| Per-label recall + precision | flag any label below 0.5 recall |
+| Tree buckets | exact / right parent / too shallow / wrong |
+| Confusion matrix | the actionable output |
+| Judge accuracy | must beat majority-label |
+| Judge direction | approves-wrong % vs rejects-right % |
+| Operating point | the number that decides if this is worth running |
+| Confidence calibration | does 0.9 mean 90%? |
 
-Three properties that matter:
+**The operating point is the deliverable, not the AUC:**
 
-1. **No sequential dependencies** — all calls issue concurrently via
-   `asyncio.wait`, so wall-clock is one call, not five.
-2. **Timeout discards laggards** rather than blocking the batch. Pending tasks
-   are cancelled and counted in `n_calls_dropped`.
-3. **Aggregation is two-stage** — arithmetic mean *across templates* for each
-   field (they are noisy estimates of the same quantity), then harmonic mean
-   *across fields* for the document score (failure is the union of component
-   failures).
+```
+   review budget    errors found    wasted review
+      1%   (500)        18%             2%
+      5% (2,500)        54%            11%
+     10% (5,000)        71%            29%
+```
 
-Empirically, additional ensemble members beyond ~5 yield under 1% improvement.
-Do not add more without measuring.
+### Quality metrics — free text fields
 
-### 6.3 Aggregators
+**Mode 0**
 
-| id | Semantics | When |
+| Metric | Default | Cost |
 |---|---|---|
-| `harmonic` | Soft minimum | Default. Any bad field poisons the document |
-| `weighted_harmonic` | Soft min with field criticality | When `total_amount` matters more than `notes` |
-| `arithmetic` | Mean | Almost never. Included for comparison and to make the point |
-| `minimum` | Hard minimum | Zero tolerance, very noisy |
+| Has a specific detail from the source | warn **< 90%** | free |
+| Copy ratio (longest verbatim run) | warn **> 50%** | free |
+| Length within bounds | expect 100% | free |
+| Boilerplate across the batch | warn on near-duplicates | free |
+| Agrees with the assigned label | warn **< 90%** | free |
+| Claim support rate | warn **< 95%** | judge |
 
-All clamp inputs to `[EPS, 1.0]` so a zero score does not divide by zero.
+**Mode 1** — a small human-rated sample, used to check the judge agrees with people.
+
+### Settings that apply everywhere
+
+| Setting | Default | Why |
+|---|---|---|
+| Bootstrap resamples | 1,000 | |
+| Resample over | **items**, not (item, field) pairs | fields in one item move together; resampling them separately fakes independence |
+| Judge temperature | 0 | a measuring instrument should not roll dice |
+| Judge output budget | ~60 tokens | verdict + confidence + one sentence |
+| Judge type | instruct | reasoning is opt-in, v1 |
+| Confidence intervals | on every ranking metric | a number without one is not a result |
+
+### The one-line answer to "can we use this?"
+
+> **Yes, if a single judge's risk score beats random, always-approve,
+> majority-label and item-length on the same target, at n ≥ 200, with an
+> interval that clears the best baseline.**
+
+If it does not, the honest answer is *"a judge is not buying you anything here"*
+— and saying that is worth more than a dashboard.
 
 ---
 
-### 6.4 Comparing two variants (A/B)
+## 2. Core model
 
-**This deliberately is not an expectation.** A `Result` describes one document
-under one check. "Variant B beats variant A" is a statement about two *runs*,
-at a grain the domain model does not have, and bolting it into `Grain` to make
-it fit would have distorted every other check to accommodate one.
+### The seven things
 
-It lives in `llmex.compare`, as functions over runs.
+| Thing | What it is |
+|---|---|
+| **Item** | The unit being processed — a session, a ticket, a document |
+| **Schema** | Declares each field and its kind |
+| **Taxonomy** | The label tree for assigned fields. Versioned, lives on its own |
+| **Output** | What the model produced for one item + field |
+| **Label** | A human answer. Optional. Kept **separate** from Output |
+| **Verdict** | One judge's opinion on one output, with a reason |
+| **Finding** | A check's result: pass / fail / unscored |
 
-| Entry point | Cost | Use when |
-|---|---|---|
-| `compare_runs(run_a, run_b, on=[...])` | free | Both variants already have results |
-| `compare_with_judge(batch_a, batch_b, judge, provider)` | $$ | Nothing free separates them |
-
-Free comparison scores a document to whichever variant failed fewer of the
-checks *both runs actually scored on it*. A check sampled out of one run says
-nothing about the other, and counting it would let sampling luck pick the
-winner.
-
-#### Significance is not optional
-
-Every `Comparison` reports an exact two-sided **McNemar** p-value over the
-discordant documents — the ones where exactly one variant succeeded. Documents
-both variants got right, or both wrong, carry no information about which is
-better and are excluded from the test while remaining in the denominator.
-
-Exact rather than the chi-square approximation, because the discordant count in
-a real A/B is routinely under 25, which is precisely where the approximation
-misleads.
-
-Two win rates are reported and the conservative one leads:
+### Labels live apart, and that is deliberate
 
 ```
-win_rate_b           B's share of all documents, ties included
-win_rate_b_decided   B's share of the documents that separated the variants
+   Item  ──┐
+           ├──►  judge  ──►  Verdict
+   Output ─┘
+
+   Label ─────►  never reaches a judge. Different path entirely.
 ```
 
-Most documents tie in a genuine A/B. Quoting only the second number turns a
-three-document lead into a "75% win rate", which is how underpowered results
-get shipped. `Comparison.verdict()` states the boring answer in words, plus how
-many more net wins would be needed to reach significance.
+A judge cannot grade itself against the answer key, because the code that calls
+judges never receives labels. A wiring guarantee, not a rule someone has to
+remember.
 
-#### Position bias in pairwise judging
-
-`PairwiseJudge` grades every document **twice, with the candidates swapped**,
-and counts a verdict only when both orders agree. Disagreements are scored as
-ties and counted in `position_flips`.
-
-This doubles the cost and is not configurable away by default. Pairwise LLM
-judges have a well-documented preference for whichever candidate they see
-first; an uncontrolled pairwise run produces a win rate manufactured by
-argument order. A high flip count is not a broken judge — it is the judge
-telling you the two variants are closer together than it can resolve.
-
-Documents whose outputs are identical are tied without a model call, since
-paying to confirm that two identical strings are identical is the most
-avoidable spend in the pipeline.
-
-## 7. Execution model
-
-### 7.1 Planning
-
-```python
-class Planner:
-    def plan(self, suite: Suite, batch: Batch) -> Plan
-```
-
-For every model-based expectation, in order:
-
-| Guard | Condition | Outcome |
-|---|---|---|
-| Alias resolution | provider/strategy alias not in suite | `PlanError` listing defined aliases |
-| Capability | `strategy.required_capabilities - provider.capabilities` non-empty | `PlanError` naming the missing capabilities |
-| Calibration | `severity is ERROR` and no calibration | `PlanError` — "an uncalibrated model score is an opinion, not a threshold" |
-| Staleness | calibration fingerprint ≠ current provider/model/strategy | `PlanError` — "recalibrate" |
-| Correlation | `provider.model_version` in `{r.generator_model}` | **Warning** — errors will be correlated |
-| Budget | estimated spend > `budget.max_usd` | **Warning** — checks will be marked unscored |
-
-The correlation check is a warning rather than an error because there are
-legitimate reasons to self-verify (no second model available, cost) — but it
-must be loud, because a self-graded score reads systematically high.
-
-`Plan.ordered()` sorts steps by `{DETERMINISTIC: 0, STATISTICAL: 1,
-MODEL_BASED: 2}`. This ordering is load-bearing, not cosmetic (P10).
-
-### 7.2 Running
-
-```python
-class Runner:
-    async def run(self, suite, batch, plan=None) -> RunResult
-    def run_sync(self, suite, batch, plan=None) -> RunResult   # asyncio.run
-```
-
-Steps:
-
-1. Build `Context` from the suite.
-2. For each step in tier order, `await expectation.validate(batch, ctx)`.
-3. After each deterministic/statistical step, merge field verdicts into
-   `ctx.prior` with AND semantics: a field is "clean" only if every cheap check
-   passed it.
-4. Roll up field→document for any `(expectation_id, doc_id)` pair that does not
-   already have a document result. **This dedupe is mandatory** — model-based
-   expectations self-score, and without the guard they get two contradictory
-   document rows.
-5. Assemble the manifest, emit to all sinks.
-
-**M6 upgrade:** deterministic steps are mutually independent and should fan out
-with `asyncio.gather`, with `ctx.prior` merged after the gather completes.
-The prototype runs them sequentially; correctness is identical, throughput is not.
-
-### 7.3 Sampling and routing
+Labels also carry **who** wrote them, which is what makes two-annotator checks
+possible:
 
 ```
-for each document:
-    suspect = any field failed a cheap check
-    audit   = rng.random() < audit_rate       # seeded for reproducibility
-    escalate = suspect or audit
+   item_id   field   label                    annotator
+   s-1042    jtbd    billing.payment_failed   ann-1
+   s-1042    jtbd    billing.card_declined    ann-2      ← they disagree
 ```
 
-The RNG is seeded from config so the same batch produces the same audit
-sample across runs — otherwise you cannot compare two runs.
-
-Typical operating point: 100% of suspect documents plus a 5% audit stratum,
-landing near the 1–5% human-review budget that production document-processing
-deployments report.
-
-### 7.4 Budget
-
-```python
-@dataclass
-class Budget:
-    max_usd: float = inf
-    max_calls: int = 2**31
-    async def reserve(self, est_calls, est_usd=0.0) -> bool   # check-and-hold
-    async def record(self, cost: Cost) -> None
-```
-
-Guarded by an `asyncio.Lock`. `reserve()` is called before issuing calls;
-`False` means produce unscored results with `BUDGET_EXHAUSTED`.
-
-**Known gap (M6):** reserve/record is not a true two-phase reservation —
-concurrent documents can each pass `reserve()` and collectively overshoot.
-Fix by holding a reservation token that `record()` settles.
-
-### 7.5 Caching (M6)
-
-Cache key:
+### Three modes, decided per field, each run
 
 ```
-sha256(expectation_id, expectation_version, config_hash,
-       input_hash, provider_id, model_version, strategy_id, prompt_version)
+   ┌─────────────────────────────────────────────────────────┐
+   │  MODE 0   no labels                                     │
+   │           screening only — distributions, drift,        │
+   │           judge health, cross-field consistency,        │
+   │           triage ranking                                │
+   ├─────────────────────────────────────────────────────────┤
+   │  MODE 1   ~100 items, one label each                    │
+   │           + accuracy, confusion matrix, judge direction,│
+   │             the operating-point table                   │
+   ├─────────────────────────────────────────────────────────┤
+   │  MODE 2   ~100 items, two independent labels            │
+   │           + is the taxonomy actually crisp?             │
+   │             everything above becomes trustworthy        │
+   └─────────────────────────────────────────────────────────┘
 ```
 
-`input_hash` covers the source text and the extraction values. Any drift in
-any component is a miss. Cache hits increment `Cost.cache_hits` and contribute
-zero USD.
+Every report says which mode each field is in and what it therefore cannot tell
+you:
 
-This is the single largest cost win available: without it, every retry
-re-bills every verifier call.
+```
+   jtbd      MODE 1  (112 labels)
+   summary   MODE 0  — accuracy not computable.
+                       ~100 rated summaries would unlock it.
+```
 
-### 7.6 Concurrency and rate limits (M6)
+### Two grains
 
-The prototype relies on a per-provider `asyncio.Semaphore`. That does not
-survive a real TPM ceiling. M6 needs:
+```
+   FIELD grain    was this one field right?
+   ITEM grain     was the WHOLE item right?   ← all fields, no exceptions
+```
 
-- A token-bucket limiter per provider keyed on `Limits.requests_per_minute`
-  and a token-per-minute estimate
-- Exponential backoff with jitter on 429, honouring `Retry-After`
-- A circuit breaker that trips a provider after N consecutive failures and
-  produces `PROVIDER_ERROR` skips rather than hanging the run
+An item with a correct label but a made-up summary is not a usable item. Both
+numbers are reported, always. The item number is always the worse one, and it is
+the one a downstream consumer actually needs.
+
+A third grain, **corpus**, covers what only exists across the batch — label
+distribution, drift, boilerplate.
+
+### Three finding states
+
+```
+   ✓  PASS       we checked it, it is fine
+   ✗  FAIL       we checked it, it is wrong
+   ○  UNSCORED   we did not check it — and here is why
+```
+
+Unscored never becomes a pass. Without the third state, a run that quietly
+stopped checking reports green.
+
+### How it flows
+
+```
+   Schema  +  Taxonomy@v4
+        │
+        ▼
+   ┌──────────────────────────────────────┐
+   │  Run:  Items + Outputs               │
+   │  Labels (optional, separate)         │
+   └───────────────┬──────────────────────┘
+                   ▼
+   ┌──────────────────────────────────────┐
+   │  GATE 1 — is the measurement sound?  │  ← always, free
+   └───────────────┬──────────────────────┘
+                   ▼
+   ┌──────────────────────────────────────┐
+   │  Detect mode, per field              │
+   └───────────────┬──────────────────────┘
+                   ▼
+        ┌──────────┴──────────┐
+        ▼                     ▼
+   ┌─────────────┐      ┌─────────────┐
+   │  ASSIGNED   │      │  FREE TEXT  │
+   │  checks     │      │  checks     │
+   └──────┬──────┘      └──────┬──────┘
+          └──────────┬─────────┘
+                     ▼
+   ┌──────────────────────────────────────┐
+   │  GATE 2 — judge vs trivial baselines │
+   └───────────────┬──────────────────────┘
+                   ▼
+   ┌──────────────────────────────────────┐
+   │  Report: findings, both grains,      │
+   │  mode banner, what you cannot conclude│
+   └──────────────────────────────────────┘
+```
 
 ---
 
-## 8. Calibration subsystem
+## 3. Inputs and outputs
 
-### 8.1 Why this exists
-
-A model-based expectation is a binary classifier: it predicts "this extraction
-is wrong." An uncalibrated classifier is an opinion. This subsystem turns
-labelled examples into a threshold you can defend in a design review, and gives
-the planner something to refuse when it is missing (P8).
-
-### 8.2 Metrics
-
-All implemented without numpy or sklearn — the framework must install cleanly
-with only `pyyaml`.
-
-**AUROC** (rank-based, Mann-Whitney U). Measures how well low scores rank the
-wrong extractions above the right ones. Handles ties by average rank.
+### Five inputs, each on its own
 
 ```
-pos = scores of INCORRECT extractions  (should be low)
-neg = scores of CORRECT extractions    (should be high)
-U   = rank_sum(incorrect) - n_err(n_err+1)/2
-AUROC = 1 - U/(n_err · n_ok)
+   items.jsonl       the sessions themselves
+   outputs.jsonl     what the model produced
+   taxonomy.yml      the label tree, versioned
+   judges.yml        judges, panel and triage wiring
+   labels.jsonl      human answers   (optional)
 ```
 
-**Precision @ num-errors.** The operational question: *if we review the K
-lowest-scoring items, what share are actually wrong?* K defaults to the true
-error count. More actionable than AUROC for capacity planning.
+Separate, not one big file. Because:
 
-**Confidence gap.** Mean score of correct minus mean score of incorrect. Unlike
-the rank metrics this is scale-sensitive, so a human can interpret raw score
-magnitudes rather than only relative ordering.
+- you re-run the model → new outputs, **same items**
+- you compare two prompts → two output files, **one items file**
+- you add labels later → drop in a file, nothing else changes
+- the taxonomy evolves on its own schedule
 
-**Threshold for target precision.** Sweep candidate thresholds, keep the one
-maximising recall subject to `precision >= target`. Returns
-`(threshold, achieved_recall)` so you can see what you are giving up.
+### What each looks like
 
-### 8.3 The Calibration object
+**items.jsonl**
 
-```python
-@dataclass
-class Calibration:
-    id: str
-    gold_set_hash: str
-    provider_id: str
-    model_version: str
-    strategy_id: str
-    metrics: dict          # auroc, precision_at_num_errors, confidence_gap,
-                           # recall_at_target_precision, per_field_auroc
-    thresholds: dict       # field_name -> float, plus "__default__"
-    n_labels: int
-    created_at: str
-
-    def fingerprint(self) -> str     # sha256 of gold_set|provider|model|strategy
-    def valid_for(self, provider_id, model_version, strategy_id) -> bool
-    def threshold_for(self, field_name) -> float | None
-    @property ref -> str             # "calibration:{id}@{fingerprint}"
+```json
+{"id": "s-1042", "text": "Maya wrote in March 3. Her card ending 4471..."}
 ```
 
-Per-field thresholds are only emitted when a field has **at least 10 labels**.
-Below that there is no defensible number and the default is used. This
-guardrail matters: per-field thresholds fitted on three examples are worse than
-no per-field thresholds.
+**outputs.jsonl** — fields side by side, which is what your model already returns
 
-`ref` lands in `Result.threshold_source`, so every result carries a pointer to
-the evidence for its own threshold.
-
-### 8.4 Workflow
-
-```
-1.  Sample documents (stratified, not random — oversample rare field patterns)
-2.  Run the strategy over them, capture per-field and per-document scores
-3.  Have humans label correctness, double-annotated with adjudication
-4.  calibrate(id, labels, provider_id, model_version, strategy_id,
-              target_precision=0.9)
-5.  Persist. Reference by id from the suite.
-6.  Re-run whenever provider, model, strategy, prompt or gold set changes.
+```json
+{"item_id": "s-1042", "jtbd": "billing.payment_failed",
+ "summary": "Maya's card 4471 was declined at renewal; a new card fixed it.",
+ "outcome": "resolved", "confidence": 0.82}
 ```
 
-### 8.5 The gold set is not trustworthy either
-
-When researchers benchmarked frontier models against existing public
-structured-extraction datasets, they found that many apparent model "errors"
-were mistakes in the benchmark's own ground truth, and concluded that every
-public dataset they reviewed was too noisy to support reliable accuracy
-measurement. Documented failure patterns included inconsistent annotation of
-conceptually identical cases, ambiguous category boundaries, and labels that
-captured a descriptive clause instead of the value.
-
-Your internal gold set will have the same disease. Therefore:
-
-- **Double-annotate** and adjudicate disagreements.
-- **Treat inter-annotator disagreement as a signal that the field definition
-  is ambiguous**, not that an annotator was careless. Fix the definition.
-- **Version and content-hash** the gold set; it is an input to the calibration
-  fingerprint.
-- Budget for label maintenance as an ongoing cost, not a one-off.
-
-### 8.6 Storage (M5)
-
-```python
-class CalibrationStore(Protocol):
-    def get(self, id: str) -> Calibration | None
-    def put(self, cal: Calibration) -> None
-    def list(self) -> list[str]
-```
-
-Ship a `FileCalibrationStore` writing JSON under `calibrations/{id}.json`, and
-a `WarehouseCalibrationStore` for teams that want them versioned alongside
-results. Suites reference calibrations by id; the store is injected.
-
----
-
-## 9. Configuration reference
-
-Everything expressible in YAML is also constructible in Python, so notebooks
-and tests never need a temp file.
-
-### 9.1 Full schema
+**taxonomy.yml**
 
 ```yaml
-suite: invoice_extraction          # required, string
-version: 3                         # required, coerced to string
+id: jtbd
+version: 4
 
-providers:                         # alias -> provider spec
-  cheap_verifier:
-    plugin: openai                 # entry-point name; required
-    model: gpt-4.1-mini            # passed to the provider constructor
-    max_concurrency: 20
-  local:
-    plugin: vllm
-    endpoint: http://gpu-01:8000
-    model: qwen3-32b
+labels:
+  billing:
+    definition: "Anything about money moving, or failing to move."
+    children:
+      payment_failed:
+        definition: "A charge was attempted and did not go through."
+        examples: ["card was declined at renewal", "insufficient funds"]
+        not_this:
+          - "asking for money back → billing.refund_request"
+          - "cannot reach the payment page → access.*"
+```
 
-strategies:                        # alias -> strategy spec; optional
-  ensemble:                        # all built-ins are auto-aliased by their id
-    plugin: diverse_ensemble
-    n_calls: 5
-    timeout_s: 20
+**labels.jsonl**
+
+```json
+{"item_id": "s-1042", "field": "jtbd", "label": "billing.payment_failed", "annotator": "ann-1"}
+```
+
+**judges.yml**
+
+```yaml
+judges:
+  - id: judge-a
+    provider: anthropic
+    model: claude-sonnet-5
+    api_key_env: ANTHROPIC_API_KEY     # the NAME, never the key
+    temperature: 0
+    max_tokens: 60
+
+  - id: judge-b
+    provider: openai
+    model: gpt-5-mini
+    api_key_env: OPENAI_API_KEY
+
+  - id: judge-c
+    provider: openai_compatible        # local box, vLLM, LM Studio
+    endpoint: http://gpu-01:1234/v1
+    model: qwen2.5-14b-instruct
+    api_key_env: null
+
+# the two jobs, wired separately
+panel:
+  members: [judge-a, judge-b, judge-c]
+  sample: 300                # configurable. the panel measures.
+
+triage:
+  judge: judge-a
+  scope: all                 # the triage judge ranks.
+```
+
+API keys are referenced by environment-variable **name**. The config file gets
+committed; the key never does.
+
+### One file ties a run together
+
+```yaml
+# run.yml
+run_id: jtbd-p8                 # a timestamp is added automatically
+
+items:    items.jsonl
+outputs:  outputs.jsonl
+labels:   labels.jsonl
+schema:   schema.yml
+taxonomy: taxonomy.yml
+judges:   judges.yml
+
+produced_by:
+  model: claude-sonnet-5
+  prompt_version: p8
 
 budget:
-  max_usd: 40
-  max_calls: 20000
-
-aggregate:
-  field_to_document: weighted_harmonic
-  field_weights:
-    total_amount: 3.0
-    currency: 0.5
-
-expectations:                      # list; each needs `type`
-  - type: expect_field_grounded_in_source
-    fields: ["vendor", "invoice_date", "total_amount"]
-    min_ratio: 0.92
-    severity: error                # error | warn | info; default error
-
-  - type: expect_field_trustworthy
-    provider: cheap_verifier       # alias from `providers`
-    strategy: ensemble             # alias from `strategies`
-    audit_rate: 0.05
-    calibration: invoices_v1       # id resolved via the CalibrationStore
-    severity: error                # requires the calibration, per P8
+  max_usd: 5.00
+  confirm: true
 ```
 
-### 9.2 Loading
+`produced_by` is stamped onto every result. Two runs from different prompt
+versions are not comparable, and the tool says so rather than drawing you a
+trend line across a prompt change.
 
-```python
-Suite.from_dict(cfg, calibrations={"invoices_v1": cal}) -> Suite
-Suite.from_yaml(path, calibrations=...) -> Suite
-suite.fingerprint() -> dict        # goes into the run manifest
+### Getting data in
+
+```
+   ┌── files ──────────────────┐
+   │  .jsonl    (default)      │
+   │  .csv                     │──┐
+   │  .parquet                 │  │
+   └───────────────────────────┘  │
+                                  ├──►  the same internal shape
+   ┌── python ─────────────────┐  │
+   │  list of dicts            │  │
+   │  pandas / polars frame    │──┘
+   └───────────────────────────┘
 ```
 
-All registered built-in strategies are auto-aliased by their id, so
-`strategy: diverse_ensemble` works with no `strategies:` block at all.
+JSONL is the default because it streams — you can point at 500,000 items
+without loading them. Readers are swappable. Warehouse connectors are v1.
 
-### 9.3 Planned additions (M7)
+### What comes out
 
-- `!from_calibration {calibration: invoices_v1, target_precision: 0.9}` as an
-  inline threshold tag, so target precision lives with the check rather than
-  with the calibration run.
-- `sample:` block with richer routing rules than a flat `audit_rate`
-  (`{rule: all_below, on: deterministic_pass, else_rate: 0.05}`).
-- `include:` for suite composition across teams.
-- JSON Schema for the config file, validated before construction, so typos
-  produce a line number rather than a `KeyError`.
+```
+   out/
+     2026-09-09_0912_jtbd-p7/
+     2026-09-09_1432_jtbd-p8/
+       ├── run.json         what ran, settings, mode per field, gates, cost
+       ├── verdicts.jsonl   every judge call — cached and reusable
+       ├── findings.jsonl   every check result, one row each
+       ├── metrics.json     the aggregate numbers with intervals
+       └── report.md        human readable
+     index.jsonl
+```
+
+Timestamped folders, so several runs a day never collide. `index.jsonl` is one
+line per run, which is what "show me every run this week" and the drift check
+read:
+
+```json
+{"run_id":"2026-09-09_1432_jtbd-p8","prompt":"p8","taxonomy":"jtbd@v4",
+ "gate1":"pass","gate2":"pass","macro_f1":0.71,"items":1204,"cost_usd":0.31}
+```
+
+**One finding row:**
+
+```json
+{"run_id": "2026-09-09_1432_jtbd-p8",
+ "check": "expect_claims_supported",
+ "grain": "field",
+ "item_id": "s-1042",
+ "field": "summary",
+ "status": "fail",
+ "score": 0.5,
+ "threshold": 0.95,
+ "threshold_from": "default",
+ "evidence": {"unsupported": ["we issued a refund of $49"]},
+ "judge": "judge-a",
+ "cost_usd": 0.0002}
+```
+
+Every row carries **why**, not just a verdict.
+
+### Per-judge visibility
+
+Every judge call is its own row. Nothing is averaged away at write time.
+
+```json
+{"judge":"judge-a","item_id":"s-1042","field":"jtbd","verdict":true,
+ "confidence":0.9,"reason":"the session is about a declined charge"}
+
+{"judge":"judge-b","item_id":"s-1042","field":"jtbd","verdict":false,
+ "confidence":0.7,"reason":"reads as a renewal problem, not a payment one"}
+```
+
+A panel finding shows the split and quotes the dissent:
+
+```json
+{"check":"expect_label_correct_panel",
+ "item_id":"s-1042","field":"jtbd","status":"fail",
+ "evidence":{
+   "votes":{"judge-a":"correct","judge-b":"incorrect","judge-c":"correct"},
+   "agreement":"2 of 3",
+   "dissent":{"judge-b":"reads as a renewal problem, not a payment one"}
+ }}
+```
+
+### Verdicts are cached, and analysis reads the cache
+
+Judge calls are the only expensive thing here. They are written to disk the
+moment they come back, and **every piece of analysis reads that file, not the
+model.**
+
+```
+   ┌──────────────────┐
+   │  COLLECT         │   costs money.  run once.
+   │  judge calls  ───┼──►  verdicts.jsonl
+   └──────────────────┘
+                             │
+   ┌──────────────────┐      │
+   │  ANALYSE         │◄─────┘   free.  run a hundred times.
+   │  metrics, checks │
+   │  report          │
+   └──────────────────┘
+```
+
+Change a threshold, add a check, fix a reporting bug, try a different target —
+re-run instantly, pay nothing. Cheap reporting code that only runs after an
+expensive collection is its own failure mode, and this removes it.
+
+Cache key: `(judge, model, prompt hash, item, field, output value)`. Change any
+of them and it is a miss. An explicit `tag` is available for when you
+deliberately want two identical-prompt runs kept apart.
 
 ---
 
-## 10. Persistence and result schema
+## 4. The shared engine
 
-### 10.1 Sinks
+### The pipeline, stage by stage
 
-| id | Output |
+```
+   ┌────────────────────────────────────────────┬────────────┐
+   │  1  load items, outputs, taxonomy, labels  │   SHARED   │
+   │  2  validate config                        │   SHARED   │
+   │  3  GATE 1 — measurement soundness         │   SHARED   │
+   │  4  detect mode, per field                 │   SHARED   │
+   │  5  plan: which checks, what cost          │   SHARED   │
+   ├────────────────────────────────────────────┼────────────┤
+   │  6  free checks                            │  DIFFERENT │
+   │  7  ask the judges                         │  part/part │
+   ├────────────────────────────────────────────┼────────────┤
+   │  8  cache verdicts                         │   SHARED   │
+   │  9  turn verdicts into findings            │   SHARED   │
+   │ 10  aggregate metrics                      │  part/part │
+   │ 11  GATE 2 — judge vs baselines            │   SHARED   │
+   │ 12  report                                 │   SHARED   │
+   └────────────────────────────────────────────┴────────────┘
+```
+
+### The seam
+
+A field kind is three lists:
+
+```python
+class FieldKind:
+    name           # "assigned" | "free_text" | "copied" (v1)
+    checks         # which free checks apply
+    judge_task     # how to ask a judge, and how to read the reply
+    metrics        # which aggregates to compute
+```
+
+Every check has the same signature, whatever kind it belongs to:
+
+```python
+check(items, outputs, ctx) -> list[Finding]
+```
+
+So the runner walks a list and collects findings. **It never branches on field
+kind.** If adding a kind requires touching the runner, the seam is in the wrong
+place.
+
+### One Verdict type
+
+Both kinds return the same thing from a judge:
+
+```python
+Verdict:
+    judge        "judge-b"
+    item_id      "s-1042"
+    field        "summary"
+    verdict      True | False | cannot_decide
+    confidence   0.7
+    reason       "claims a refund that never happened"
+    detail       {...}     # free text puts its claim list here
+```
+
+Because the shape is common, all of this works for both kinds with no extra
+code:
+
+```
+   judge approval rate        ← the rubber-stamp check
+   parse failure rate
+   panel voting and dissent
+   relative leniency
+   triage risk score
+   per-judge health table
+   verdict caching
+```
+
+If free text had its own verdict shape, every one of those would be written
+twice.
+
+### Three check grains
+
+Checks differ by *what they look at*, not by field kind:
+
+```
+   FIELD    one item, one field
+            "is this label in the taxonomy?"
+            "does this summary mention anything specific?"
+
+   ITEM     one item, several fields          ← the interesting one
+            "does the summary agree with the label?"
+
+   CORPUS   the whole batch
+            "did one label swallow 60% of everything?"
+            "are all the summaries suspiciously alike?"
+```
+
+Cross-field consistency is an **item** check, so it belongs to neither kind — it
+sits above both and reads whatever fields the schema names.
+
+### What is actually different
+
+**Free checks:**
+
+| Assigned | Free text |
 |---|---|
-| `console` | Human summary: counts by grain, blocking failures, cost, failure detail with evidence |
-| `jsonl` | One JSON object per result plus a sidecar `.manifest.json` |
-| `warehouse` (M7) | Two tables, below |
+| label in taxonomy | length in bounds |
+| valid leaf of the tree | has a specific detail from the source |
+| distribution / collapse | copy ratio |
+| drift vs last run | boilerplate across the batch |
 
-### 10.2 Warehouse landing tables
+**Judge prompt and reply shape** — same transport, cache, retry, cost
+accounting and panel logic; only the prompt text and the parser differ.
 
-```sql
-CREATE TABLE dq_result (
-    run_id            VARCHAR   NOT NULL,
-    expectation_id    VARCHAR   NOT NULL,
-    expectation_ver   VARCHAR   NOT NULL,
-    grain             VARCHAR   NOT NULL,   -- field | document | corpus
-    doc_id            VARCHAR   NOT NULL,
-    field_name        VARCHAR,              -- NULL for document/corpus grain
-    success           BOOLEAN,              -- NULL = deliberately unscored
-    skip_reason       VARCHAR,
-    score             DOUBLE,
-    threshold         DOUBLE,
-    threshold_source  VARCHAR   NOT NULL,   -- "manual" | "calibration:id@fp"
-    severity          VARCHAR   NOT NULL,
-    observed          VARCHAR,
-    evidence_kind     VARCHAR,
-    evidence          JSON,
-    provider_id       VARCHAR,
-    model_version     VARCHAR,
-    strategy_id       VARCHAR,
-    prompt_version    VARCHAR,
-    cost_usd          DOUBLE,
-    cost_calls        INTEGER,
-    created_at        TIMESTAMP NOT NULL
-);
+**Metrics:**
 
-CREATE TABLE dq_run (
-    run_id            VARCHAR   PRIMARY KEY,
-    suite_name        VARCHAR   NOT NULL,
-    suite_version     VARCHAR   NOT NULL,
-    suite_fingerprint JSON      NOT NULL,
-    estimated_calls   INTEGER,
-    estimated_usd     DOUBLE,
-    actual_usd        DOUBLE,
-    actual_calls      INTEGER,
-    n_records         INTEGER,
-    n_documents       INTEGER,
-    warnings          JSON,
-    started_at        TIMESTAMP NOT NULL
-);
-```
-
-Partition `dq_result` by `created_at` date. Cluster on `(expectation_id,
-doc_id)`. The columns you will actually group by in anger are
-`prompt_version`, `model_version` and `threshold_source`.
-
-### 10.3 Derived views worth shipping
-
-```sql
--- the grain gap, which is the number that matters
-SELECT prompt_version,
-       AVG(CASE WHEN grain='field'    THEN success::INT END) AS field_pass_rate,
-       AVG(CASE WHEN grain='document' THEN success::INT END) AS doc_pass_rate
-FROM dq_result WHERE success IS NOT NULL GROUP BY 1;
-
--- coverage rot: how much are we quietly not checking?
-SELECT expectation_id, skip_reason, COUNT(*)
-FROM dq_result WHERE success IS NULL GROUP BY 1, 2;
-
--- undefended thresholds
-SELECT expectation_id, COUNT(*)
-FROM dq_result WHERE threshold_source = 'manual' AND severity = 'error'
-GROUP BY 1;
-```
-
----
-
-## 11. Repository layout
-
-### 11.1 Naming and packaging
-
-| Surface | Value | Why |
+| Assigned only | Free text only | Shared |
 |---|---|---|
-| PyPI distribution | `llm-expectations` | Discoverability. People search "great expectations for LLM" |
-| Import name | `llmex` | Five characters at the top of every file |
-| Entry-point groups | `llmex.providers`, `llmex.strategies`, ... | Must match the import name |
-| Plugin distributions | `llmex-openai`, `llmex-anthropic` | Short, obviously in-family |
-| GitHub | `llm-expectations/llm-expectations` | Matches the distribution |
+| accuracy, macro F1 | claim support rate | bootstrap + intervals |
+| confusion matrix | specificity rate | the trivial baselines |
+| per-label precision/recall | copy ratio distribution | operating-point table |
+| tree scoring | | triage AUC, drift |
 
-Distribution name and import name deliberately differ, following
-`beautifulsoup4` → `bs4` and `scikit-learn` → `sklearn`. The long name wins
-search traffic; the short one wins ergonomics.
+### Rough size
 
-**Entry-point group names are public API.** Every third-party plugin declares
-against `llmex.providers` and friends. Renaming after plugins exist is a
-breaking change for the whole ecosystem, not a find-and-replace. This is
-settled and must not move after M0.
-
-**Disambiguation.** The `expect_*` convention is borrowed because it is
-learnable; nobody owns the word "expect". This project is not a Great
-Expectations port or plugin — suites are not interchangeable, the `Result`
-type is different, and there is no GX analogue for the calibration layer. The
-README states this explicitly to head off the support burden.
-
-### 11.2 Tree
-
-```
-llm-expectations/
-├── pyproject.toml               # entry points for all six registries
-├── README.md
-├── DESIGN.md                    # this document
-├── CHANGELOG.md
-├── suite.example.yml
-├── demo.py                      # offline end-to-end walkthrough
-│
-├── llmex/
-│   ├── __init__.py              # public API + built-in module imports
-│   ├── types.py                 # enums, Cost, Evidence, Provenance, PlanError
-│   ├── batch.py                 # SourceDoc, ExtractionRecord, Batch, Context
-│   ├── result.py                # Result, RunResult
-│   ├── registry.py              # Registry + the six singletons
-│   ├── expectation.py           # Expectation, SyncExpectation, @field_check
-│   ├── aggregate.py             # harmonic, weighted_harmonic, arithmetic, minimum
-│   ├── budget.py                # Budget
-│   ├── calibration.py           # metrics, Calibration, calibrate()
-│   ├── cache.py                 # M6
-│   ├── planner.py               # Planner, Plan, Step, guards
-│   ├── runner.py                # Runner, tier ordering, rollup
-│   ├── suite.py                 # Suite, YAML loading, fingerprint
-│   ├── sinks.py                 # ConsoleSink, JsonlSink
-│   ├── cli.py                   # M7
-│   │
-│   ├── providers/
-│   │   ├── base.py              # protocol, CostModel, Limits, request/response
-│   │   └── mock.py              # MockProvider, HTTPChatProvider skeleton
-│   ├── strategies/
-│   │   ├── base.py              # protocol, ScorePayload, ScoreSet
-│   │   └── builtin.py           # single_judge, per_field_judge, ensemble, logprob
-│   ├── expectations/
-│   │   ├── builtin.py           # the five built-ins
-│   │   └── ast_eval.py          # M7, replaces eval()
-│   └── stores/
-│       └── calibration.py       # M5, File + Warehouse stores
-│
-├── plugins/                     # separately published distributions
-│   ├── llmex-openai/
-│   ├── llmex-anthropic/
-│   ├── llmex-bedrock/
-│   └── llmex-warehouse/
-│
-├── tests/
-│   ├── conftest.py              # shared fixtures
-│   ├── test_types.py
-│   ├── test_batch.py
-│   ├── test_aggregate.py
-│   ├── test_calibration.py
-│   ├── test_expectations.py
-│   ├── test_planner.py          # all guards
-│   ├── test_runner.py           # tiers, rollup, dedupe, prior merging
-│   ├── test_strategies.py
-│   ├── test_budget.py
-│   ├── test_suite.py
-│   ├── test_registry.py
-│   └── golden/                  # fixture corpora with known-seeded errors
-│
-└── docs/
-    ├── quickstart.md
-    ├── writing-expectations.md
-    ├── writing-providers.md
-    ├── calibration-guide.md
-    └── cost-management.md
-```
-
----
-
-## 12. Implementation plan
-
-Nine milestones. M0–M5 produce a framework that is genuinely usable; M6–M8 make
-it production-grade. Each milestone lists its goal, files, ordered tasks, and
-acceptance criteria. **A milestone is not done until its acceptance criteria
-pass in CI.**
-
-Effort estimates assume one engineer working with the reference prototype
-available (Appendix A).
-
----
-
-### M0 — Skeleton and CI · ~0.5 day
-
-**Goal.** A repository that installs, lints, type-checks and runs an empty test
-suite in CI.
-
-**Files.** `pyproject.toml`, `.github/workflows/ci.yml`, `.gitignore`,
-`README.md`, `llmex/__init__.py`, `tests/conftest.py`
-
-**Tasks.**
-1. `pyproject.toml` with `name = "llm-expectations"`, `requires-python = ">=3.10"`,
-   dependency on `pyyaml` only, `[tool.setuptools.packages.find] include = ["llmex*"]`,
-   and declared entry-point groups for all six registries (empty is fine).
-   **Register the PyPI name with a 0.0.0 placeholder before writing code** — PyPI
-   names are permanent and this one is not yet claimed.
-2. Dev extras: `pytest`, `pytest-asyncio`, `ruff`, `mypy`.
-3. `ruff` config: line length 100, select `E,F,I,UP,B,S`. `S` (bandit) matters
-   because of the `eval` in `expect_fields_to_satisfy`.
-4. `mypy` config: `strict = true` for `llmex/`, relaxed for `tests/`.
-5. CI matrix over Python 3.10–3.13 running lint, typecheck, tests.
-6. `pytest-asyncio` in `auto` mode so `async def test_` works without decorators.
-
-**Acceptance.** `pip install -e ".[dev]"` succeeds; `ruff check`, `mypy llmex`,
-`pytest` all pass on an empty suite; CI green on all Python versions.
-
----
-
-### M1 — Domain core · ~1 day
-
-**Goal.** Every type in section 4, plus the registry, plus the expectation base
-and both sync shims. No checks yet.
-
-**Files.** `types.py`, `batch.py`, `result.py`, `registry.py`, `expectation.py`
-
-**Tasks.**
-1. `types.py` — all five enums, `Cost` (with the max-latency `__add__`),
-   `Evidence`, `Provenance`, `PlanError`. Every type gets `.as_dict()`.
-2. `batch.py` — `SourceDoc`, `ExtractionRecord` (both frozen), `Batch` with the
-   memoising callable resolver, `Context`.
-3. `result.py` — `Result`, `RunResult` with `failures()`, `unscored()`,
-   `summary()`.
-4. `registry.py` — `Registry` with local-then-entry-point resolution, the
-   `plugin()` decorator, and the six singletons. Entry-point discovery must be
-   exception-safe and cached.
-5. `expectation.py` — `Expectation` ABC, `SyncExpectation`, `@field_check`.
-   **Build the generated class with `type(name, bases, namespace)` including
-   `check`.** Assigning it post-creation leaves `__abstractmethods__` populated.
-
-**Acceptance.**
-- `Cost() + Cost()` sums tokens and takes max latency — asserted in a test.
-- `Batch.source()` calls the resolver exactly once per doc_id (assert with a
-  counting fake).
-- `Batch.doc_ids` preserves insertion order.
-- A `@field_check`-decorated function is instantiable and appears in
-  `EXPECTATIONS.names()`.
-- `Registry.get("nope")` raises `KeyError` whose message lists available names.
-- `mypy --strict` clean.
-
----
-
-### M2 — Deterministic tier and runner v1 · ~2 days
-
-**Goal.** The framework does useful work with no model, no money, no network.
-
-**Files.** `aggregate.py`, `expectations/builtin.py` (four deterministic and
-statistical checks), `runner.py`, `sinks.py`, `suite.py`
-
-**Tasks.**
-1. `aggregate.py` — four aggregators. **`_clean()` must accept a Mapping or a
-   Sequence**; the runner passes a mapping and naive iteration yields keys.
-   Clamp to `[EPS, 1.0]`.
-2. `expect_field_type` — the simplest check, use it to shake out the shape.
-3. `expect_field_grounded_in_source` — the four-branch resolution order from
-   §6.1, with distinct `Evidence.kind` per branch.
-4. `expect_fields_to_satisfy` — document grain. Ship with `eval` + empty
-   builtins and an explicit `# TODO(M7): AST evaluator` plus a `noqa: S307`.
-5. `expect_field_null_rate_between` — corpus grain, exercises the third grain.
-6. `runner.py` — tier ordering, `_merge_prior` with AND semantics, `_rollup`
-   with the **`already_scored` dedupe set**, manifest assembly, `run_sync`.
-7. `sinks.py` — `ConsoleSink` and `JsonlSink`.
-8. `suite.py` — `from_dict`, `from_yaml`, `fingerprint`. Auto-alias every
-   registered built-in strategy.
-
-**Acceptance.**
-- A seeded fixture corpus with known hallucinations: grounding flags exactly
-  the seeded ones, no more, no fewer.
-- Both grains present in `RunResult.results`.
-- No duplicate `(expectation_id, doc_id)` document rows.
-- `harmonic([0.99]*19 + [0.02]) < 0.35` while `arithmetic(...) > 0.9`.
-- `harmonic({"a": 1.0, "b": 1.0})` does not raise on the mapping form.
-- Manifest round-trips through JSON.
-
----
-
-### M3 — Provider and strategy layer · ~2 days
-
-**Goal.** Model-based checking works, against a mock and at least one real API.
-
-**Files.** `providers/base.py`, `providers/mock.py`, `strategies/base.py`,
-`strategies/builtin.py`, `expectations/builtin.py` (add
-`expect_field_trustworthy`), `plugins/llmex-openai/`
-
-**Tasks.**
-1. `providers/base.py` — protocol, `CostModel`, `Limits`, request/response,
-   `cost_of()` helper.
-2. `providers/mock.py` — deterministic `MockProvider` that scores on substring
-   containment with per-tag jitter so ensemble members legitimately disagree.
-   **This is the backbone of the whole test suite**; get it right.
-3. `HTTPChatProvider` skeleton with an unimplemented `_post`.
-4. `strategies/base.py` — protocol, `ScorePayload`, `ScoreSet`.
-5. `single_judge`, then `per_field_judge` (fan out with `gather`), then
-   `diverse_ensemble` (five templates, `asyncio.wait` with timeout, cancel
-   pending, count dropped, two-stage aggregation), then `logprob` (mostly to
-   have something that requires an unusual capability).
-6. `expect_field_trustworthy` — dual-grain emission, escalation logic, all
-   three skip paths.
-7. First real plugin distribution: `plugins/llmex-openai` with its own
-   `pyproject.toml` declaring the entry point.
-
-**Acceptance.**
-- `diverse_ensemble` completes in roughly one call's latency, not five
-  (assert wall-clock against a mock with 50 ms latency).
-- A strategy timeout produces `n_calls_dropped > 0` and still returns a score.
-- Provider exception → `PROVIDER_ERROR` skip, run completes.
-- `expect_field_trustworthy` emits both a field row per field and exactly one
-  document row per escalated document.
-- `pip install -e plugins/llmex-openai` makes `plugin: openai` resolvable with
-  no core change.
-
----
-
-### M4 — Planner and guards · ~1 day
-
-**Goal.** Every misconfiguration fails before a token is spent.
-
-**Files.** `planner.py`, `runner.py` (accept a pre-built plan)
-
-**Tasks.**
-1. `Plan`, `Step`, `Planner`.
-2. Alias resolution with a helpful error listing defined aliases.
-3. Capability negotiation via set difference; error names the missing
-   capabilities and the offending provider and model version.
-4. Calibration guard: `severity is ERROR` and no calibration → `PlanError`.
-5. Staleness guard: `calibration.valid_for(provider, model, strategy)`.
-6. Correlated-verifier warning.
-7. Cost estimation and over-budget warning.
-8. `Plan.ordered()`.
-
-**Acceptance.** One test per guard asserting the exception type and a
-substring of the message. Plus a positive test: the same config at
-`severity: warn` plans cleanly.
-
----
-
-### M5 — Calibration subsystem · ~1.5 days
-
-**Goal.** Thresholds are derived and auditable.
-
-**Files.** `calibration.py`, `stores/calibration.py`, `cli.py` (calibrate
-subcommand)
-
-**Tasks.**
-1. `auroc` with average-rank tie handling. Test against a hand-computed case
-   including ties.
-2. `precision_at_k`, `confidence_gap`, `threshold_for_precision`.
-3. `Calibration` with `fingerprint`, `valid_for`, `threshold_for`, `ref`.
-4. `calibrate()` — global threshold plus per-field thresholds, gated at a
-   **minimum of 10 labels per field**.
-5. `FileCalibrationStore` (JSON under `calibrations/`).
-6. `llmex calibrate --suite s.yml --gold gold.jsonl --target-precision 0.9`.
-7. Additional statistical expectations: `expect_field_cardinality_stable`,
-   `expect_value_distribution_similar_to_baseline`.
-
-**Acceptance.**
-- AUROC returns exactly 1.0 for perfectly separated scores, 0.5 for random,
-  and handles all-ties without dividing by zero.
-- A field with 9 labels gets no per-field threshold; with 10 it does.
-- `Calibration.ref` appears in `Result.threshold_source` end to end.
-- Changing `model_version` invalidates the calibration at plan time.
-
----
-
-### M6 — Execution hardening · ~2.5 days
-
-**Goal.** Survives contact with a real API at real volume.
-
-**Files.** `cache.py`, `providers/base.py`, `budget.py`, `runner.py`
-
-**Tasks.**
-1. **Response cache** — the §7.5 key. `MemoryCache` and `DiskCache`
-   (content-addressed files). Wire through `ScoringStrategy` so every provider
-   call checks it. Cache hits set `Cost.cache_hits` and zero USD.
-   *This is the highest-value item in the entire milestone.*
-2. **Two-phase budget** — `reserve()` returns a token that `record()` settles
-   and that a context manager releases on failure. Closes the concurrent
-   overshoot gap.
-3. **Rate limiting** — token bucket per provider from
-   `Limits.requests_per_minute` plus a tokens-per-minute estimate.
-4. **Retries** — exponential backoff with jitter on 429/5xx, honour
-   `Retry-After`, cap attempts.
-5. **Circuit breaker** — trip after N consecutive failures, produce
-   `PROVIDER_ERROR` skips rather than hanging.
-6. **Parallel deterministic tier** — `asyncio.gather` across independent
-   steps, merge `ctx.prior` after.
-7. **Grounding prefilter** — n-gram index over the source so the fuzzy window
-   scan stops being O(n·m) on long documents.
-
-**Acceptance.**
-- Second identical run reports `cache_hits > 0` and `usd == 0`.
-- A fake provider returning 429 twice then succeeding produces one successful
-  result and exactly three attempts.
-- 100 concurrent documents against `Budget(max_usd=0.01)` never exceed it.
-- Deterministic tier wall-clock scales sub-linearly in step count.
-
----
-
-### M7 — Config, CLI, safety, docs · ~2 days
-
-**Files.** `cli.py`, `expectations/ast_eval.py`, `suite.py`, `sinks.py`,
-`docs/`
-
-**Tasks.**
-1. **Replace `eval`** with a restricted AST evaluator. Walk the tree; allow
-   `Compare`, `BoolOp`, `UnaryOp`, `BinOp`, `Name`, `Constant`, `Subscript`,
-   `Tuple`, `List`; reject everything else with a clear error. Fuzz it.
-2. JSON Schema for the config, validated before construction.
-3. `!from_calibration` YAML tag.
-4. Richer `sample:` block.
-5. `include:` for suite composition.
-6. CLI: `llmex validate`, `llmex plan` (dry run with cost estimate), `llmex run`,
-   `llmex calibrate`, `llmex explain <doc_id>`.
-7. `WarehouseSink` writing the §10.2 tables.
-8. The five docs pages.
-
-**Acceptance.** `llmex plan` prints estimated cost and every warning without
-issuing a call. AST evaluator rejects `__import__`, attribute access, calls,
-and comprehensions. Fuzz corpus produces no unhandled exception.
-
----
-
-### M8 — SQL pushdown engine · ~3 days · optional
-
-**Goal.** Deterministic checks execute in the warehouse for corpus-scale batches.
-
-**Tasks.**
-1. `ExecutionEngine` protocol and `ENGINES` registry.
-2. `PythonEngine` wrapping current behaviour.
-3. `SqlEngine` with `can_pushdown()` per expectation; compile grounding,
-   type and null-rate checks to SQL.
-4. **Equivalence test harness**: the same fixture batch through both engines
-   must produce identical results modulo ordering. Non-negotiable.
-
-**Acceptance.** Equivalence suite green over every pushdown-capable
-expectation across at least two dialects.
-
----
-
-### M9 — Ecosystem · ongoing
-
-Additional provider distributions (`llmex-anthropic`, `llmex-bedrock`,
-`llmex-vllm`), an `nli_entailment` strategy using a small local model for
-groundedness at near-zero marginal cost, a dbt-artifact sink, and an
-OpenLineage emitter.
-
-### Dependency graph
-
-```
-M0 ──> M1 ──> M2 ──> M3 ──> M4 ──> M5 ──> M6 ──> M7 ──> M8
-                │              └──────────┘        │
-                └──> (M2 alone is shippable)       └──> M9
-```
-
-M2 is the first shippable increment: deterministic groundedness checking with
-dual-grain reporting and zero cost is already worth deploying.
-
----
-
-## 13. Testing strategy
-
-### 13.1 The prime directive
-
-**Every test runs offline.** No API key, no network, no fixture recording.
-`MockProvider` is the backbone: deterministic, free, and scriptable. If a test
-needs a real provider, it belongs in a separate opt-in integration suite gated
-behind an environment variable, never in CI's default path.
-
-### 13.2 Layers
-
-| Layer | What to test | Style |
-|---|---|---|
-| Value types | `Cost.__add__` latency semantics, serialisation round-trips | Unit |
-| Aggregators | Soft-min property, mapping/sequence duality, zero handling | Property-based where possible |
-| Calibration math | AUROC against hand-computed cases including ties; threshold monotonicity | Unit with fixtures |
-| Expectations | Seeded corpora with known errors; exact flag sets | Golden fixtures |
-| Planner | One test per guard, exception type plus message substring | Unit |
-| Runner | Tier ordering, `prior` merging, rollup dedupe, skip propagation | Integration with mock |
-| Strategies | Concurrency, timeout dropping, exception isolation | Async unit |
-| Budget | Concurrent overshoot, unscored-not-passed | Async stress |
-| Suite | YAML round-trip, alias resolution, fingerprint stability | Unit |
-
-### 13.3 Golden fixtures
-
-`tests/golden/` holds small corpora with **deliberately seeded errors** and an
-answer key:
-
-```
-tests/golden/invoices/
-    docs.jsonl          # doc_id, text
-    extractions.jsonl   # doc_id, field, value, span, prompt_version
-    answers.jsonl       # doc_id, field, is_correct, error_type
-```
-
-Seed the error types that actually occur in production, which are documented
-and specific:
-
-| Error type | Example |
+| Part | Lines, roughly |
 |---|---|
-| `fabrication` | Vendor name not present in source |
-| `transposition` | 7,430.10 for 7,340.10 |
-| `wrong_instance` | Picked the wrong date when several appear |
-| `misattribution` | Associated a value with an unrelated concept |
-| `span_drift` | Right value, wrong offsets |
-| `omission` | Null where the source has a value |
-| `format_drift` | `2024-02-31` — well-formed and impossible |
-| `derived_error` | Computed field wrong though its inputs are right |
+| Shared engine — I/O, config, gates, cache, judges, panel, sampling, bootstrap, baselines, operating point, report | **~1,200** |
+| Assigned checks + metrics | ~450 |
+| Free-text checks + metrics | ~470 |
+| Item + corpus checks | ~200 |
 
-The last one is the argument for keeping derived fields out of the model's job
-entirely; the fixture exists to demonstrate that the framework catches it via
-`expect_fields_to_satisfy` rather than via an expensive judge.
-
-### 13.4 Tests that must exist
-
-Non-negotiable, because each pins a bug the prototype actually hit or a
-principle that is easy to erode:
-
-1. `harmonic` on a mapping does not raise (the dict-iteration bug).
-2. A `@field_check` function is instantiable (the `__abstractmethods__` bug).
-3. No duplicate document rows for a self-scoring expectation (the rollup bug).
-4. Budget exhaustion yields `success is None`, never `True` (P5).
-5. Uncalibrated + `severity: error` raises at plan time (P8).
-6. Capability gap raises at plan time (P7).
-7. Stale calibration raises at plan time (P8).
-8. Field pass-rate exceeds document pass-rate on the seeded corpus (P4 — if
-   this ever inverts, the rollup is broken).
-
-### 13.5 Coverage targets
-
-90% line coverage on `llmex/`, with `planner.py`, `runner.py`, `aggregate.py`
-and `calibration.py` at 100%. Those four are where a silent bug produces
-confidently wrong quality numbers, which is worse than a crash.
+A little under 60% shared. The shared part is all the fiddly infrastructure and
+the kind-specific parts are small independent functions — which is the right way
+round.
 
 ---
 
-## 14. Operations
+## 5. Assigned fields
 
-### 14.1 Where each tier runs
-
-| Tier | Cadence | Environment |
-|---|---|---|
-| Deterministic | Every batch, 100% coverage | Inline with the extraction pipeline |
-| Statistical | Per batch, aggregate | Same |
-| Model-based | Per batch, sampled | Async worker pool, off the critical path |
-| Calibration | On model/prompt/gold-set change | Manual or scheduled job |
-
-Never put model-based checks in a per-PR CI path. The cost is unbounded and
-the signal is noisy at small sample sizes. CI runs deterministic checks over a
-frozen fixture corpus.
-
-### 14.2 Alerting
-
-Alert on the derived views from §10.3, not on raw failure counts:
-
-- **Grain gap widening** — field pass-rate holding while document pass-rate
-  falls means errors are spreading across fields.
-- **Coverage rot** — `success IS NULL` share rising means you are quietly
-  checking less than you think.
-- **Undefended thresholds** — any `threshold_source = 'manual'` with
-  `severity = 'error'` is a P8 violation that slipped through.
-- **Ensemble drop rate** — `n_calls_dropped` trending up means timeouts are
-  too tight or the provider is degraded.
-
-### 14.3 Cost control
-
-1. Cache first (M6) — the largest single win.
-2. Tier ruthlessly. Anything expressible deterministically must not reach the
-   model tier.
-3. Use a cheap verifier. Verification is an easier task than generation;
-   a small fast model is usually sufficient and is what production
-   deployments actually run.
-4. Set `audit_rate` from the calibration's precision/recall curve, not from
-   intuition. The 1–5% human-review figure is an *output* of that curve, not
-   an input.
-
-### 14.4 Versioning discipline
-
-Treat `(model, prompt, schema, expectation_version, calibration)` as one
-versioned artifact. A change to any component means historical results were
-produced by a different function and must not be compared naively. The
-manifest exists to make this checkable; the alert exists because nobody checks
-it voluntarily.
-
----
-
-## 15. Extension cookbook
-
-### 15.1 A new provider
-
-```python
-class MyProvider:
-    id = "my-provider"
-    model_version = "v1.2"
-    capabilities = frozenset({Capability.STRUCTURED_OUTPUT, Capability.SYSTEM_PROMPT})
-    cost = CostModel(usd_per_1k_in=0.15, usd_per_1k_out=0.60)
-    limits = Limits(max_concurrency=20, requests_per_minute=500)
-
-    def __init__(self, model: str, api_key: str | None = None, **kw): ...
-
-    async def complete(self, req: CompletionRequest) -> CompletionResponse: ...
-```
-
-```toml
-[project.entry-points."llmex.providers"]
-my-provider = "llmex_myprovider:MyProvider"
-```
-
-**Declare capabilities honestly.** Over-declaring `LOGPROBS` moves a failure
-from plan time to run time, which is exactly the failure mode P7 exists to
-prevent.
-
-### 15.2 A new expectation, one function
-
-```python
-@field_check(id="expect_currency_iso4217", fields=["currency"])
-def currency_is_iso(rec, batch, ctx):
-    ok = rec.value in {"USD", "EUR", "GBP", "CAD"}
-    return ok, Evidence("enum", {"got": rec.value})
-```
-
-### 15.3 A new expectation, full control
-
-```python
-@EXPECTATIONS.plugin("expect_field_matches_dimension")
-class ExpectFieldMatchesDimension(SyncExpectation):
-    id = "expect_field_matches_dimension"
-    version = "1"
-    kind = Kind.DETERMINISTIC
-    grain = Grain.FIELD
-
-    def check(self, batch, ctx) -> list[Result]:
-        allowed = set(self.config["values"])
-        return [
-            Result(expectation_id=self.id, grain=Grain.FIELD,
-                   doc_id=r.doc_id, field_name=r.field_name,
-                   success=r.value in allowed, severity=self.severity,
-                   observed=r.value,
-                   evidence=Evidence("dimension", {"n_allowed": len(allowed)}),
-                   provenance=self.provenance)
-            for r in batch.for_fields(self.config.get("fields", ["*"]))
-        ]
-```
-
-Set `blocking = True` if `check()` does heavy CPU work; it will be offloaded.
-
-### 15.4 A judge-backed expectation for semantic correctness
-
-Four steps, none of which involve writing an expectation from scratch.
-
-**1. Configure the strategy** — the rubric and taxonomy are config:
+### Config
 
 ```yaml
-strategies:
-  my_judge:
-    plugin: label_judge
-    label_set: ["invoice", "receipt", "statement"]
-    rubric: |
-      Judge the document's type by what it is for, not by its layout.
-      If the document does not say, score near 0.5.
+fields:
+  jtbd:
+    kind: assigned
+    taxonomy: jtbd@v4
+    require_leaf: true
+    allow_abstain: true
+    max_label_share: 0.5
+    abstain_rate: [0.01, 0.20]
 ```
 
-**2. Calibrate it** against human labels before it is allowed to block:
+Every threshold is a default you can change.
 
-```python
-cal = calibrate_judge(
-    id="doctype_v1",
-    decisions=[LabelledDecision(doc_id, "doc_type", score, predicted, gold), ...],
-    provider_id=p.id, model_version=p.model_version, strategy_id="label_judge",
-    target_precision=0.9,
-)
-FileCalibrationStore("calibrations").put(cal)
+### The check ladder
+
+```
+   ┌─ FREE, runs on everything ──────────────────────────────┐
+   │                                                          │
+   │  1  label exists in taxonomy@v4                          │
+   │  2  label is a valid leaf                                │
+   │  3  abstention rate in range           (corpus)          │
+   │  4  distribution: no collapse, no drift (corpus)          │
+   │  5  agrees with the other fields        (item)           │
+   │                                                          │
+   └──────────────────────┬───────────────────────────────────┘
+                          │
+   ┌─ COSTS MONEY ────────▼───────────────────────────────────┐
+   │                                                          │
+   │  6  PANEL     3 judges on ~300 items                     │
+   │               → how good is this? which labels are fuzzy? │
+   │                                                          │
+   │  7  TRIAGE    1 judge on everything                      │
+   │               → rank items for human review              │
+   │                                                          │
+   └──────────────────────┬───────────────────────────────────┘
+                          │
+   ┌─ FREE, only if you have labels ──────▼───────────────────┐
+   │                                                          │
+   │  8  compare to the human label                           │
+   │  9  grade the judge against the human                    │
+   │                                                          │
+   └──────────────────────────────────────────────────────────┘
 ```
 
-If it comes back with a threshold of 0.0 and a recall of 0.0, no cut achieves
-your target precision. Lower the target deliberately, or improve the judge —
-do not type a threshold.
+### An honest note about cost
 
-**3. Wire it up.** Subclass only if you want distinct vocabulary; the parent
-already does escalation, budget, skips and thresholds:
+For **copied** fields there is a strong free gate — a value not in the text was
+invented, so you only pay to judge the suspicious ones.
 
-```python
-@EXPECTATIONS.plugin("expect_doc_type_trustworthy")
-class ExpectDocTypeTrustworthy(ExpectFieldTrustworthy):
-    id = "expect_doc_type_trustworthy"
-    version = "1"
-    default_strategy = "my_judge"
-    field_evidence_kind = "doctype_verdict"
-    document_evidence_kind = "doctype_verdict_doc"
+**Assigned fields have no such gate.** Checks 1–5 catch *format* problems, not
+*wrongness*. A perfectly formed label that is simply the wrong one passes every
+free check.
+
+So the triage judge has to see everything, or a large sample. The cost levers:
+
+| Lever | Effect |
+|---|---|
+| Triage on all items | 1 call per item. The default. |
+| Triage on a sample | Ranking only covers what you sampled. |
+| Panel sample size | 3 judges × N. Default N = 300 → 900 calls. |
+| Judge output budget | ~60 tokens. |
+| Small instruct model for triage | The single biggest saving. |
+
+A typical run: **50,000 triage calls + 900 panel calls.** The panel is a
+rounding error; the triage judge is the whole bill.
+
+### The free checks
+
+**1. Label exists** — expect 100%. Anything else means the model invented a
+label, or your taxonomy version moved under it.
+
+**2. Valid leaf** — did it stop at the right depth?
+
+```
+   billing.payment_failed   ✓ leaf
+   billing                  ✗ too shallow — stopped at the parent
+   billing.payment.card     ✗ not a real path
 ```
 
-Override `default_strategy` rather than reading a strategy at the call site:
-the planner resolves the same attribute, so capability negotiation and the
-staleness guard validate against the strategy that will actually run.
+**3. Abstention rate** — warn outside 1–20%.
 
-**4. Grade the grader** on any run where gold exists:
+```
+   too high  → your taxonomy has a gap
+   too low   → the model is forcing a label onto unclear items
+```
+
+**4. Distribution** — two things at once:
+
+```
+   COLLAPSE   biggest label share > 50%  →  warn
+   DRIFT      vs the previous run; any label moving > 10pp  →  warn
+```
+
+Drift is what catches a prompt change nobody told you about.
+
+**5. Agrees with the other fields** — item grain, free, underrated. If the
+summary talks about logging in and the label says `payment_failed`, one of them
+is wrong.
+
+### Stability — the re-sampling hook
 
 ```yaml
-- type: expect_judge_agrees_with_gold
-  fields: ["doc_type"]
-  min_kappa: 0.4
+produced_by:
+  regenerate:                        # optional. no hook, no stability check.
+    provider: anthropic
+    model: claude-sonnet-5
+    api_key_env: ANTHROPIC_API_KEY
+    prompt_file: prompts/jtbd_p8.txt
+    sample: 100                      # never the whole corpus
+    runs: 2
 ```
 
-If you find yourself overriding `validate()`, stop — the divergence belongs in
-the parent, where the routing and skip semantics are tested once.
+Three rules keep it contained:
 
-### 15.5 A new strategy
+**Sample only.** A diagnostic, not a re-run.
+**Never overwrites your outputs.** Writes to its own file.
+**Two different numbers, labelled differently:**
 
-```python
-@STRATEGIES.plugin("nli_entailment")
-class NliEntailment:
-    id = "nli_entailment"
-    required_capabilities = frozenset()      # local model, no provider needed
+```
+   temperature 0     →  SERVING stability.  Expect ~100%.
+                        Anything less means your serving stack is
+                        nondeterministic, which is worth knowing.
 
-    def estimate_calls(self, n_fields): return 0
-
-    async def score(self, payload, provider) -> ScoreSet:
-        # run a small local NLI model; entailment probability = field score
-        ...
+   temperature > 0   →  DECISION stability.  How fragile is this label
+                        when the model rolls the dice?
 ```
 
-The most interesting unbuilt strategy. Groundedness via a small local
-entailment model costs approximately nothing per document and catches the
-dominant error class.
+### With labels — Mode 1
 
-### 15.6 A new aggregator
+**Tree scoring, four buckets:**
 
-```python
-@AGGREGATORS.plugin("p10")
-def tenth_percentile(scores, weights=None) -> float:
-    vals = sorted(_clean(scores))
-    return vals[max(0, int(len(vals) * 0.10) - 1)] if vals else 1.0
+```
+   human says:  billing.payment_failed
+
+   EXACT           billing.payment_failed
+   RIGHT PARENT    billing.refund_request     ← sibling. boundary problem.
+   TOO SHALLOW     billing                    ← stopped at the parent
+   WRONG           access.password_reset      ← different branch entirely
 ```
 
-Must accept a mapping or a sequence.
+Each bucket points at a different fix. Sibling confusion means two definitions
+need sharpening. Too-shallow means the model is hedging. Wrong means it is not
+reading the item.
+
+**The metrics:**
+
+```
+   macro F1                 the headline. not accuracy.
+   per-label recall         flag any label under 0.5
+   confusion matrix         the actionable output
+   exact / parent / shallow / wrong
+   confidence calibration   does 0.9 mean 90%?
+```
+
+Accuracy is reported but never alone — on a skewed taxonomy, always guessing the
+biggest label scores well and knows nothing.
 
 ---
 
-## 16. Non-goals and known limitations
+## 6. Judges
 
-### 16.1 Explicit non-goals
+### Two jobs, wired separately
+
+```
+   ┌─ PANEL ──────────────────────────────────────────────┐
+   │  3 judges  ×  ~300 items                             │
+   │                                                       │
+   │  answers:  how good is this overall?                  │
+   │            which label pairs are fuzzy?               │
+   │            is any judge broken?                       │
+   └───────────────────────────────────────────────────────┘
+
+   ┌─ TRIAGE ─────────────────────────────────────────────┐
+   │  1 judge  ×  every item                              │
+   │                                                       │
+   │  answers:  which 500 of these 50,000 should a         │
+   │            human open first?                          │
+   └───────────────────────────────────────────────────────┘
+```
+
+### What a judge is asked
+
+```
+   SYSTEM
+     You are checking a label another system assigned to an item.
+     Decide whether the label is correct.
+     If the item does not say enough to decide, answer cannot_decide
+     rather than guessing.
+
+     The permitted labels are:
+       billing.payment_failed — a charge was attempted and did not go through
+       billing.refund_request — the customer is asking for money back
+       access.password_reset  — the customer cannot get into their account
+
+   USER
+     ITEM:
+     Maya wrote in March 3. Her card ending 4471 was declined when
+     the subscription auto-renewed...
+
+     ASSIGNED LABEL: billing.payment_failed
+
+     Reply with: correct (true/false/cannot_decide), confidence 0-1,
+     and one sentence of reasoning.
+```
+
+Four things on purpose:
+
+**The taxonomy definitions go in the prompt.** This is why the definitions in
+`taxonomy.yml` are load-bearing and not documentation.
+
+**A reason is always required.** ~60 tokens. It is what a reviewer reads, and how
+you see *why* judges split.
+
+**`cannot_decide` is allowed.** Forcing a verdict on an unclear item manufactures
+noise. It maps to unscored, never to "wrong".
+
+**Every panel judge gets the byte-identical prompt.** Otherwise panel
+disagreement measures your prompt differences instead of your judges.
+
+### The panel
+
+```
+   item s-1042 / jtbd
+
+   judge-a   correct    0.9   "the session is about a declined charge"
+   judge-b   incorrect  0.7   "reads as a renewal problem, not a payment one"
+   judge-c   correct    0.8   "card declined is squarely a payment failure"
+
+   ───────────────────────────────────────────────────────
+   majority: correct (2 of 3)      ← reported, with the split visible
+   dissent quoted in the finding
+```
+
+**What the panel is for** — three outputs:
+
+```
+   1  an accuracy estimate over the sample, with an interval
+   2  which label pairs the judges keep splitting on   →  taxonomy bug
+   3  a side-by-side health check of your judges
+```
+
+A per-item panel verdict *is* emitted, so you can derive your own insights from
+it. It carries a warning rather than being withheld.
+
+**Three things the panel deliberately does not do:**
 
 | Not doing | Why |
 |---|---|
-| Extraction / generation | P2. Composes with any extractor instead |
-| Prompt management | Separate concern with mature tools |
-| Model serving | Providers are thin adapters over someone else's endpoint |
-| A UI | Sinks feed existing BI. Building a dashboard is a different product |
-| Streaming / per-record | Batch-oriented by design; a streaming adapter can wrap it |
+| Route disagreements to review | Disagreement does not rank errors. It ranks near chance. |
+| Auto-approve on unanimity | Judges agree constantly and are wrong on a lot of it. Consensus is not proof. |
+| Report one blended score | Hiding a 2–1 split behind an average throws away the only interesting part |
 
-### 16.2 Known limitations
+**Effective votes** are reported:
 
-| Limitation | Impact | Milestone |
+```
+   3 judges, agreement 92%  →  effective votes 1.1 of 3
+
+   ⚠ you are paying for three opinions and receiving about one.
+```
+
+### The triage judge: a risk score
+
+With two or three fields per item, "share of fields flagged" is too coarse to
+rank with. The risk score uses confidence too:
+
+```
+   risk = 1 − (mean judge confidence across the item's fields)
+
+   item      jtbd conf   summary conf   risk
+   s-2201      0.31         0.22        0.74     ← open this first
+   s-1042      0.90         0.55        0.28
+   s-0876      0.95         0.91        0.07     ← leave it
+```
+
+Works with 1 field or 15, gives a continuous ranking, and uses both the verdict
+and how sure the judge was. Sort descending, review down the list until the
+budget runs out.
+
+### Judge screening — free, and the most important check
+
+From the panel sample, per judge, no human labels needed:
+
+```
+   judge     approves   cannot_decide   parse fail
+   judge-a     71%          4%            0.3%
+   judge-b     58%          2%            0.7%
+   judge-c     94%          0%            0.0%    ⚠ possible rubber stamp
+```
+
+A judge approving 94% of everything passes every format check ever written and
+quietly destroys the panel. This table is the only thing that catches it.
+
+**Relative leniency, also free.** When two judges disagree, note who approved:
+
+```
+   judge-c approves, judge-b rejects   →  188 times
+   judge-b approves, judge-c rejects   →   14 times
+
+   judge-c is the pushover.
+```
+
+With human labels you also get the absolute version — how often each judge waves
+through a wrong label versus rejects a right one.
+
+### Choosing judges
+
+**Three panel members is enough.** More buys very little.
+
+**Do not expect independence from using different providers.** Two models from
+different companies routinely make the same mistakes.
+
+**What helps is a judge that fails the other way.** If your judges all wave
+through wrong labels, add a strict one that rejects too much. Two lenient judges
+are nearly one judge.
+
+**Instruct models, temperature 0, ~60 output tokens.** Reasoning models are v1 —
+more accurate, far more expensive, and they return empty replies when thinking
+eats the token budget. Those empties land on the hard items.
+
+### Settings
+
+| Setting | Default |
+|---|---|
+| Panel size | 3 |
+| Panel sample | 300 items (configurable) |
+| Triage scope | all items |
+| Temperature | 0 |
+| Max output tokens | 60 |
+| Approval-rate warning band | 15–85% |
+| Parse failure warning | 2% |
+| Retries | 3, with backoff |
+
+---
+
+## 7. Free text fields
+
+### Why it is different
+
+For an **assigned** field you can hold up the right answer:
+
+```
+   model said:     billing_problem
+   right answer:   payment_failed
+   →  wrong. done.
+```
+
+For **free text** there is no single right answer:
+
+```
+   model said:      "Maya's card was declined at renewal; a new card fixed it."
+   equally good:    "Payment failed on auto-renew, resolved by updating the card."
+
+   Both correct. They share almost no words.
+```
+
+So you cannot ask *"is it right?"* — comparing to one gold summary would score
+word choice. You ask *"is anything wrong with it?"* and hunt for specific
+defects.
+
+### What goes wrong
+
+Source: *"Maya wrote in March 3. Her card ending 4471 was declined when the
+subscription auto-renewed. She gave us a different card and the $49 charge went
+through."*
+
+| # | Bad output | What is wrong |
 |---|---|---|
-| No response cache | Retries re-bill every call | M6 |
-| Budget reservation not two-phase | Concurrent overshoot possible | M6 |
-| `eval` in `expect_fields_to_satisfy` | Unsafe for untrusted config | M7 |
-| Semaphore-only rate limiting | Will not survive a real TPM ceiling | M6 |
-| O(n·m) fuzzy grounding scan | Slow on long documents | M6 |
-| Deterministic steps run sequentially | Throughput, not correctness | M6 |
-| No self-consistency strategy | Needs generator access, forbidden by P2 | Opt-in hook, undecided |
-| `HTTPChatProvider._post` unimplemented | No real provider in core | M3 |
+| 1 | "Her card was declined so we **issued a refund of $49**." | **Made up.** No refund happened. |
+| 2 | "The customer had a problem and it was resolved." | **Generic.** True of every session. |
+| 3 | *pastes the whole session back* | **Copied**, not summarised. |
+| 4 | "Maya couldn't **log in** to her account." | **Contradicts the label.** |
+| 5 | *three paragraphs* | **Wrong shape.** |
 
-### 16.3 Things that look like bugs and are not
+Four of the five are caught for free. Only "made up" needs a judge — and it is
+the one that matters most, so it is worth paying for.
 
-- **`Cost.__add__` takes max latency.** Verifier calls run in parallel; summing
-  would report 5× the wall-clock truth.
-- **`success=None` is not a pass.** It is the point of P5.
-- **The demo reports AUROC 1.00.** `MockProvider` scores by substring
-  containment, which is exactly what the demo's labels encode. Real verifiers
-  land far lower. It is a plumbing check, not a capability claim.
-- **Document pass-rate is much worse than field pass-rate.** That is the
-  finding, not a defect.
+### Config
 
----
-
-## 17. Open questions
-
-1. **Self-consistency under observe-only.** Measuring generator agreement
-   across k samples catches a failure class nothing else does, but needs
-   re-generation. Options: an opt-in `regenerate: Callable` on `Batch`; a
-   separate `llmex-generate` companion; or accept the gap. *Leaning toward the
-   opt-in callable, since it keeps the default posture intact.*
-2. **Corpus-grain baselines.** `expect_value_distribution_similar_to_baseline`
-   needs a stored baseline. Reuse `CalibrationStore`, or a separate
-   `BaselineStore` with its own retention?
-3. **Multi-tenancy.** If suites come from untrusted users, the AST evaluator is
-   necessary but not sufficient — provider credentials and budget isolation
-   also need a story.
-4. **Nested extractions.** The current model is flat `(doc, field)`. Real
-   schemas nest (`line_items[].amount`). Options: flatten with a path syntax
-   (`line_items.3.amount`) at ingest, or make `field_name` a JSONPath.
-   *Leaning toward flattening at the `ExtractionRecord` boundary so the core
-   stays flat.*
-5. **Cross-document checks.** Deduplication and entity resolution across a
-   corpus do not fit the current grains. New `Grain.ENTITY`, or out of scope?
-
----
-
-## Appendix A — prototype status
-
-A working reference implementation exists: 22 files, ~2,400 lines, 16 tests
-passing, demo runs offline in under a second.
-
-| Component | Status |
-|---|---|
-| `types`, `batch`, `result`, `registry` | Complete (M1) |
-| Four deterministic/statistical expectations | Complete (M2) |
-| Four aggregators | Complete (M2) |
-| Runner with tiers, prior merging, rollup dedupe | Complete (M2) |
-| `MockProvider`, `HTTPChatProvider` skeleton | Complete (M3), `_post` unimplemented |
-| Four strategies incl. `diverse_ensemble` | Complete (M3) |
-| `expect_field_trustworthy`, dual grain | Complete (M3) |
-| Planner with all four guards | Complete (M4) |
-| Calibration metrics and `calibrate()` | Complete (M5) |
-| `CalibrationStore` | Not started (M5) |
-| Cache, rate limiting, retries, circuit breaker | Not started (M6) |
-| CLI, AST evaluator, warehouse sink | Not started (M7) |
-| SQL pushdown | Not started (M8) |
-
-Demo output on a six-document corpus with two seeded hallucinations:
-
-```
-1. plan-time guards
-   calibration guard   -> severity=error requires a calibration.
-   capability guard    -> strategy 'logprob' requires ['logprobs'] but
-                          provider 'no_logprobs' (nolp-1) does not expose them.
-   correlated verifier -> verifier model 'mock-1.0' also generated these
-                          extractions.
-
-2. calibration    auroc 1.000  thresholds {__default__: 0.95}
-                  ref calibration:invoices_v1@cf7d7d6c5f78
-
-3. full run       corpus pass=4 · document pass=8 fail=4 · field pass=50 fail=4
-                  $0.0024 over 150 calls
-
-4. grain gap      field-grain    92.6%
-                  document-grain 66.7%
-                  gap            25.9%
+```yaml
+fields:
+  summary:
+    kind: free_text
+    style: descriptive          # descriptive | judgement | proposal
+    min_words: 5
+    max_words: 30
+    must_agree_with: [jtbd]
+    min_specificity: 0.9
+    max_copy_ratio: 0.5
+    min_claim_support: 0.95
 ```
 
-Three bugs the prototype surfaced, all now pinned by tests and called out in
-their respective milestones: the `__abstractmethods__` decorator bug (M1), the
-aggregator mapping-iteration bug (M2), and the rollup duplication bug (M2).
+`style` decides how the expensive check works:
+
+```
+   descriptive   "Maya's card 4471 was declined; a new card fixed it."
+                 many small facts  →  split into claims, check each
+
+   judgement     "Resolved on first contact."
+                 one conclusion    →  don't split. one question over
+                                      the whole item.
+
+   proposal      "Confirm her new card is saved as default."
+                 about the future  →  don't ground it at all.
+                                      ask: does this follow from the facts?
+```
+
+### The check ladder
+
+```
+   ┌─ FREE, runs on everything ──────────────────────────────┐
+   │                                                          │
+   │  1  length in bounds                                     │
+   │  2  is it specific, or filler?                           │
+   │  3  copy ratio — is it pasting the source back?          │
+   │  4  boilerplate across the batch        (corpus)         │
+   │  5  agrees with the other fields         (item)          │
+   │                                                          │
+   └──────────────────────┬───────────────────────────────────┘
+                          │  flagged items + a small audit sample
+                          ▼
+   ┌─ COSTS MONEY ────────────────────────────────────────────┐
+   │                                                          │
+   │  6  are the claims supported by the item?                │
+   │                                                          │
+   └──────────────────────────────────────────────────────────┘
+```
+
+**Free text is cheaper than assigned**, which is the opposite of what you would
+guess. Checks 2 and 5 are genuinely predictive — a summary with no specific
+detail, or one that contradicts the label, is usually the one that has invented
+something. So they *do* gate the expensive check.
+
+### The free checks
+
+**2. Specific, or filler?** — no NLP library needed.
+
+```
+   Find tokens that appear in the item AND are rare across the batch
+   (in fewer than 5% of items). Then: does the output contain any?
+
+   "the customer had a problem"           → 0 rare tokens   ✗ filler
+   "card 4471 declined at renewal"        → "4471"          ✓ specific
+```
+
+**3. Copy ratio** — longest run copied word-for-word, as a share of the output.
+Over 50% means it is pasting, not summarising.
+
+**4. Boilerplate** — how many outputs are near-duplicates of another output.
+
+```
+   47 of 1,204 summaries are near-identical to another summary
+   →  the model has fallen into a template
+```
+
+**5. Agrees with the other fields** — free, and it uses the taxonomy.
+
+```
+   label:  billing.payment_failed
+   its definition mentions: charge, payment, declined, card
+
+   summary: "Maya couldn't log in to her account."
+   overlap with those terms: none
+   →  flag. one of these two fields is wrong.
+```
+
+### The expensive check
+
+The judge splits the claims — it is better at that than a regex, and it is one
+call:
+
+```
+   ITEM:    Maya wrote in March 3. Her card ending 4471 was declined
+            when the subscription auto-renewed...
+
+   TEXT:    "Her card was declined so we issued a refund of $49."
+
+   →  claim 1: "her card was declined"        supported     ✓
+      claim 2: "we issued a refund of $49"    NOT supported ✗
+
+      support rate: 1/2 = 0.50    threshold 0.95   →  FAIL
+```
+
+The claim list rides in `detail`. This needs a bigger output budget than the
+assigned judge — around 200 tokens instead of 60.
+
+### With human ratings — Mode 1
+
+Do not ask humans to write a better summary. **Ask them to mark defects** — the
+same boxes the library checks:
+
+```
+   s-1042   "Her card was declined so we issued a refund of $49."
+
+     ☑  something made up
+     ☐  too generic
+     ☐  contradicts another field
+     ☐  missing something important
+```
+
+About 30 seconds per item, and it lines up exactly with what the judge said:
+
+```
+   defect              judge vs human agreement
+   made up                    0.86
+   too generic                0.91
+   contradicts                0.94
+   missing something          0.52     ← the weak one, as expected
+```
+
+That last row is the honest outcome. *"Did it miss something?"* is hard for the
+judge and for the human, and the number says so instead of hiding it.
+
+### Cost
+
+| | Assigned | Free text |
+|---|---|---|
+| Free gate is predictive? | no | **yes** |
+| Judge calls | 1 per item | ~1 per flagged item + audit |
+| Output tokens per call | ~60 | ~200 |
+
+If 15% of summaries get flagged and you audit 5% of the rest, you pay for about
+19% of the corpus instead of 100%.
 
 ---
 
-## Appendix B — glossary
+## 8. Taxonomy
 
-| Term | Meaning |
+### One file, four readers
+
+```
+                    ┌──► the judge prompt
+                    │     (definitions + not_this)
+                    │
+   taxonomy.yml ────┼──► the validity check
+      @v4           │     (is this label real? is it a leaf?)
+                    │
+                    ├──► tree scoring
+                    │     (parent / child relationships)
+                    │
+                    ├──► cross-field consistency
+                    │     (does the summary use this label's vocabulary?)
+                    │
+                    └──► the human annotator
+                          (the same definitions, word for word)
+```
+
+The last one matters most. If the judge and the human read different
+definitions, judge-versus-human disagreement tells you nothing about either.
+
+**`not_this` is the part that makes a taxonomy work.** Definitions tell you what
+a label covers; boundary cases tell you where it stops. Those boundaries are
+exactly where a model and a human both get confused.
+
+### Versioning, and the guardrail
+
+Any content change bumps the version. The library hashes the file and stamps it
+into every run:
+
+```
+   ERROR  taxonomy jtbd@v4 has changed since it was last used.
+          Recorded hash: 8f3a...   Current: c1d9...
+          Bump to v5, or restore the file.
+```
+
+This stops the worst silent failure — someone tightens a definition, nobody
+bumps, and a month of results quietly stop being comparable.
+
+### Migration between versions
+
+```yaml
+# jtbd_v4_to_v5.yml
+billing.payment_failed:  billing.charge_failed     # renamed
+billing.card_declined:   billing.charge_failed     # merged into one
+access.password_reset:   access.password_reset     # unchanged
+billing.refund_request:  null                      # no equivalent
+```
+
+With a mapping, old runs can be compared to new ones. Without one, the library
+refuses and says why.
+
+### The fuzzy-pair detector
+
+The check nothing else gives you. Three sources of evidence, increasing in
+strength:
+
+**Free, no labels — from panel disagreement:**
+
+```
+   87 items where the judges split.
+   62 of them involve one pair:
+
+       billing.payment_failed  ↔  billing.card_declined
+
+   →  71% of all disagreement sits on a single boundary.
+```
+
+**With labels — from the confusion matrix, and the direction matters:**
+
+```
+   SYMMETRIC                          ASYMMETRIC
+   payment_failed → card_declined 23   payment_failed → refund 31
+   card_declined → payment_failed 19   refund → payment_failed  2
+
+   The boundary is unclear.            The model is biased one way.
+   → fix the TAXONOMY                  → fix the PROMPT
+```
+
+**With two annotators — the strongest evidence:**
+
+```
+   Two humans disagreed on 18% of items.
+   Two thirds of those disagreements are this same pair.
+
+   →  Your annotators cannot separate these labels either.
+      This is not a model problem. Merge them or rewrite both definitions.
+```
+
+### Static health checks on the file
+
+Run before you spend anything, no data required:
+
+| Check | Catches |
 |---|---|
-| **Batch** | A set of extraction records plus a resolver for their sources |
-| **Calibration** | A fitted threshold with metrics, fingerprinted to a specific provider/model/strategy/gold set |
-| **Capability** | A declared provider feature negotiated at plan time |
-| **Document accuracy** | Share of documents where *every* field is correct |
-| **Evidence** | Structured explanation attached to every result |
-| **Field accuracy** | Share of individual fields correct — the flattering metric |
-| **Grain** | The unit a result describes: field, document, or corpus |
-| **Grain gap** | Field pass-rate minus document pass-rate |
-| **Groundedness** | Whether an extracted value appears in the source text |
-| **Provenance** | The exact function that produced a result |
-| **Provider** | Adapter over a model endpoint: transport, auth, cost, capabilities |
-| **Soft minimum** | Harmonic mean; punished by its worst input |
-| **Strategy** | How a model is interrogated, independent of which model |
-| **Trust laundering** | Presenting an uncalibrated model score as a quality measurement |
-| **Unscored** | `success=None`; deliberately not checked, never a pass |
+| Every label has a definition | A label the judge can only guess at |
+| Every label has at least one example | Same |
+| No duplicate label names across branches | `billing.other` and `access.other` |
+| Two definitions nearly identical | Two labels that are really one |
+| Leaf depth consistent | A branch that stops early by accident |
+| Boundary cases on sibling labels | The pairs most likely to become fuzzy |
+
+### Settings
+
+| Setting | Default |
+|---|---|
+| Require definition on every label | on |
+| Require examples | warn only |
+| Require leaf | on, per field |
+| Definition similarity warning | 0.8 |
+| Fuzzy-pair report | top 5 pairs |
+| Version hash enforcement | on |
 
 ---
 
-*End of document.*
+## 9. Guardrails
+
+Checks on the **measurement**, not on your data. They run first, cost nothing,
+and are always on.
+
+### Three severities — and they suppress numbers, not the run
+
+```
+   STOP   this specific number cannot be computed honestly.
+          It is not reported. The reason is.
+
+   WARN   reported, with a flag attached.
+
+   NOTE   worth knowing.
+```
+
+A guardrail firing does not kill the run. It removes the numbers it invalidates
+and says which and why:
+
+```
+   ┌─────────────────────────────────────────────────────┐
+   │  WHAT THIS RUN CANNOT TELL YOU                      │
+   │                                                     │
+   │  ✗ triage AUC for `summary`                         │
+   │      only 12 items in the minority class (need 30)  │
+   │                                                     │
+   │  ✗ judge-c's contribution to panel agreement        │
+   │      judge-c approved 97% of items — excluded       │
+   │                                                     │
+   │  ✗ drift vs the previous run                        │
+   │      taxonomy changed from v4 to v5, no mapping     │
+   └─────────────────────────────────────────────────────┘
+```
+
+### Tier 1 — always on, each catches a silent disaster
+
+**Rubber-stamp judge**
+
+```
+   WARN   outside 15–85%
+   STOP   outside  2–98%   → excluded from panel aggregates,
+                             raw verdicts still written to disk
+```
+
+**Unreadable replies — counted, never defaulted**
+
+```
+   WARN  > 2%     STOP  > 5%
+```
+
+A coin-flip default is uncorrelated by construction, which quietly changes every
+agreement number in the run. And report *which* items failed:
+
+```
+   ⚠ 31 empty replies. They are not random:
+       mean item length of failures : 4,200 words
+       mean item length overall     :   900 words
+
+     Your hardest items are the ones going unjudged.
+```
+
+**Degenerate target** — need ≥ 30 items and ≥ 5% in the minority class. An AUC
+computed while ranking three negatives looks fine and has a tight-looking
+interval.
+
+**No label leakage** — structural. The code that builds triage signals never
+receives labels; they arrive on a separate path and the function signature does
+not accept them. Backed by one runtime assertion.
+
+### Tier 2 — cheap, needs a little data
+
+**Sample too small** — the number is shown with its interval and a plain
+statement:
+
+```
+   triage AUC   0.68  [0.46, 0.87]   n = 28
+   ⚠ This interval spans "useless" to "excellent". It cannot support
+     a conclusion. 200 items minimum.
+```
+
+A wide interval is not a weak result — it is no result.
+
+**The trivial baselines, run automatically**, next to every ranking metric.
+
+**Resampling over items**, never over `(item, field)` pairs. Fields within one
+item move together.
+
+### Tier 3 — needs labels
+
+| Guardrail | What it catches |
+|---|---|
+| Judge direction | A judge that only fails one way, adding nothing to a panel that already fails that way |
+| Judge vs majority-label | A judge that cannot beat "always guess the biggest label" |
+| Confidence calibration | A judge whose 0.9 means 60% |
+
+### Tier 4 — v1
+
+Outcome-selected exclusion. Threshold provenance audit.
+
+### Exclusions are logged, always
+
+```
+   excluded   reason                          n
+   ────────────────────────────────────────────
+   filtered   item text empty                12
+   filtered   user filter: language != en   340
+   dropped    judge gave no readable reply    31
+```
+
+Dropping items is normal. Dropping them *because they scored badly* is how
+numbers get manufactured, and it is invisible unless every exclusion states a
+reason.
+
+### Cost guard
+
+```
+   PLAN   1,204 items
+          triage : 1,204 calls
+          panel  :   900 calls  (300 items × 3 judges)
+          claims :   228 calls  (flagged summaries + audit)
+          ─────────────────────
+          2,332 calls, est. $0.34
+
+   Budget is $0.25. Continue? [y/N]
+```
+
+Over budget, items past the cap are marked **unscored**, never passed.
+
+### Settings
+
+| Guardrail | Default | Change it |
+|---|---|---|
+| Judge approval warn band | 15–85% | yes |
+| Judge approval stop band | 2–98% | yes |
+| Parse failure warn / stop | 2% / 5% | yes |
+| Minority class floor | 30 items and 5% | yes |
+| Minimum n for a ranking claim | 200 | yes |
+| Bootstrap resamples | 1,000 | yes |
+| Cost confirmation prompt | on | yes |
+| Label-leak assertion | on | **no** |
+
+Everything is tunable except the label-leak assertion. That is not a threshold,
+it is a bug check.
+
+---
+
+## 10. Config and report
+
+### The files
+
+```
+   project/
+     run.yml           ties everything together
+     schema.yml        fields and their kinds
+     taxonomy.yml      the label tree, versioned
+     judges.yml        judges, panel and triage wiring
+     settings.yml      thresholds        (optional — all have defaults)
+
+     items.jsonl       the sessions
+     outputs.jsonl     what your model produced
+     labels.jsonl      human answers     (optional)
+```
+
+### Settings override in three layers
+
+```
+   built-in defaults
+        ↓  overridden by
+   settings.yml            project-wide
+        ↓  overridden by
+   schema.yml, per field   the specific case
+```
+
+Nothing has to be configured to start. Every default is printed in the report
+next to the number it produced.
+
+### `schema.yml`
+
+```yaml
+item: support_session
+
+fields:
+  jtbd:
+    kind: assigned
+    taxonomy: jtbd@v4
+    require_leaf: true
+    allow_abstain: true
+
+  summary:
+    kind: free_text
+    style: descriptive
+    max_words: 30
+    must_agree_with: [jtbd]
+
+  outcome:
+    kind: assigned          # small vocabulary → a label, not free text
+    taxonomy: outcomes@v1
+```
+
+**If a free-text field only ever takes a handful of values, make it assigned.**
+Same information, a fraction of the cost, far better checks.
+
+### CLI
+
+```bash
+llm-expectations run run.yml           # collect + analyse
+llm-expectations plan run.yml          # cost estimate, no calls
+llm-expectations analyse out/<run>/    # re-analyse from cache, free
+llm-expectations compare out/a out/b   # two runs, head to head
+llm-expectations check taxonomy.yml    # static taxonomy health
+```
+
+`analyse` is the one you will use most. Change a threshold, add a check, fix a
+bug — re-run and pay nothing.
+
+### The report
+
+```
+llm-expectations   2026-09-09_1432_jtbd-p8
+
+  1,204 items      $0.34      2,332 calls      4m 12s
+
+  ┌ GATES ────────────────────────────────────────────────────┐
+  │  measurement sound       PASS                              │
+  │  judge beats baselines   PASS    0.84  vs  0.50 best       │
+  └────────────────────────────────────────────────────────────┘
+
+  MODE
+    jtbd       MODE 1    112 labels
+    summary    MODE 0    no ratings
+    outcome    MODE 1    112 labels
+
+  ┌ WHAT THIS RUN CANNOT TELL YOU ────────────────────────────┐
+  │  ✗ whether the judge agrees with people on `summary`       │
+  │      no human defect ratings.                              │
+  │      ~100 rated summaries would unlock it.                 │
+  └────────────────────────────────────────────────────────────┘
+
+
+  ── jtbd ─────────────────────────────── assigned · jtbd@v4 ──
+
+  free checks
+    label in taxonomy            100.0%   ✓
+    valid leaf                    99.7%   ✗  4 stopped at a parent
+    abstention rate                6.2%   ✓  band 1–20%
+    largest label share           31.0%   ✓  max 50%
+    drift vs previous run         +4pp on billing.payment_failed
+    agrees with summary           94.1%   ✗  71 conflicts
+
+  panel                          3 judges × 300 items
+    majority says correct         78.3%   [74.1, 82.2]
+    judges agree                  86.0%
+    effective votes               1.4 of 3   ⚠ paying 3× for ~1.4
+    fuzziest pair                 payment_failed ↔ card_declined
+                                  62 of 87 splits (71%)  → taxonomy bug
+
+  judges
+    judge        approves   cannot_decide   unreadable
+    judge-a         71%          4%            0.3%
+    judge-b         58%          2%            0.7%
+    judge-c         94%          0%            0.0%   ⚠ rubber stamp?
+
+  vs humans                      112 labels
+    macro F1                      0.71
+    accuracy                      0.79    majority-label baseline 0.34
+    exact / parent / shallow / wrong    0.79 / 0.11 / 0.03 / 0.07
+    weakest label                 access.sso_issue   recall 0.42  n=31
+
+    review budget    errors found    wasted effort
+        1%               18%              2%
+        5%               54%             11%
+       10%               71%             29%
+
+
+  ── summary ────────────────────── free_text · descriptive ──
+
+  free checks
+    length in bounds              98.9%   ✓
+    specific, not filler          91.2%   ✓  min 90%
+    copy ratio under 50%          99.1%   ✓
+    boilerplate                   47 near-duplicates   ⚠
+    agrees with jtbd              94.1%   ✗  71 conflicts
+
+  claim support                  228 judged  (185 flagged + 43 audit)
+    support rate                  0.87    ✗  min 0.95
+    items with an invented claim  31
+    worst   s-2201   "we issued a refund of $49"  — not in the item
+
+
+  ── EXCLUSIONS ──────────────────────────────────────────────
+    12   item text was empty
+    31   judge gave no readable reply
+
+  ── FILES ───────────────────────────────────────────────────
+    out/2026-09-09_1432_jtbd-p8/
+```
+
+### Three things the report always does
+
+**Says which mode each field is in, at the top.** You should never have to guess
+whether a number is backed by human answers.
+
+**Prints the threshold next to every result.** `91.2% ✓ min 90%`.
+
+**Prints the baseline next to every metric that has one.** A number without its
+baseline is not a result.
+
+---
+
+## 11. Repo layout and build order
+
+### Layout
+
+```
+llm-expectations/
+  pyproject.toml
+  README.md
+  DESIGN.md
+
+  llm_expectations/
+    types.py          Item, Output, Label, Verdict, Finding, enums
+    schema.py         Schema, FieldSpec, FieldKind
+    taxonomy.py       tree, versioning, hash, health checks
+    config.py         run.yml, settings layering
+
+    read.py           jsonl / csv / parquet / python objects
+    write.py          findings, verdicts, metrics, index
+    report.py         the text report
+
+    plan.py           what will run, cost estimate
+    run.py            the orchestrator
+    cache.py          verdict cache
+    budget.py
+
+    judges/
+      base.py         Judge protocol, Verdict
+      providers.py    anthropic, openai, openai-compatible
+      prompts.py      prompt builders per task
+      panel.py        voting, dissent, agreement, effective votes
+      triage.py       risk score, ranking
+      screening.py    approval rate, leniency, health table
+
+    checks/
+      base.py         Check protocol, three grains
+      assigned.py
+      free_text.py
+      item.py         cross-field consistency
+      corpus.py       distribution, drift, boilerplate
+      guardrails.py   Gate 1
+
+    metrics/
+      classification.py   F1, confusion matrix, tree buckets
+      ranking.py          AUC, operating point
+      agreement.py        agreement, effective votes, leniency
+      stats.py            bootstrap, intervals, baselines
+
+    cli.py
+
+  tests/
+  examples/jtbd/
+```
+
+Three rules that keep it from rotting:
+
+**`types.py` imports nothing** from the rest of the package. If something needs
+to import upward, the layering is wrong.
+
+**`checks/` never asks what field kind it is in.** A check is a function with one
+signature; the schema decides which ones run.
+
+**`metrics/` never calls a model.** It reads findings and verdicts off disk.
+That is what makes `analyse` free.
+
+### Build order
+
+```
+   M0  skeleton
+       types, schema, taxonomy, readers, config
+       ~2 days
+
+   M1  one judge, end to end                    ◄── FIRST SHIPPABLE
+       providers, prompts, cache, triage risk score,
+       judge health (approval rate, parse rate), minimal report
+       → "here are the 500 sessions to open first"
+       ~4 days
+
+   M2  free checks + full report
+       assigned, corpus, item checks
+       ~3 days
+
+   M3  panel
+       voting, dissent, agreement, effective votes,
+       screening, fuzzy-pair detector
+       ~2 days
+
+   M4  guardrails + stats                       ◄── SHIPPABLE
+       Gate 1 in full, Gate 2, bootstrap, intervals, baselines
+       ~2 days
+
+   M5  labels (Mode 1)
+       F1, confusion matrix, tree buckets, operating point,
+       judge direction, calibration
+       ~3 days
+
+   M6  free text                                ◄── SHIPPABLE
+       free checks, claim judge, defect ratings
+       ~4 days
+
+   M7  across runs — compare, drift, stability hook
+       ~2 days
+
+   M8  polish, docs, worked example
+       ~2 days
+```
+
+**Judge health goes into M1, not M4.** Approval rate and parse rate are about
+twenty lines each, and without them the first shippable version could be quietly
+ranking items with a rubber-stamp judge. That guardrail cannot wait.
+
+### What depends on what
+
+```
+   M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M7 ──► M8
+                  │                    │
+                  └────► M6 ───────────┘
+```
+
+### Testing
+
+**Everything offline.** A `FakeJudge` returning scripted verdicts is the
+backbone — deterministic, free, and it lets CI run the whole pipeline including
+the panel.
+
+**Golden fixtures with deliberately planted errors.** A small corpus where you
+know exactly which items are wrong and how:
+
+| Seeded error | Example |
+|---|---|
+| sibling confusion | `payment_failed` where it should be `card_declined` |
+| too shallow | `billing` instead of a leaf |
+| invented label | a label not in the taxonomy at all |
+| collapse | one label swallowing everything |
+| invented claim | a summary asserting something not in the item |
+| filler | a summary with no specific detail |
+| contradiction | summary and label disagreeing |
+
+The acceptance test is that the tool flags **exactly** those — no more, no
+fewer.
+
+### Tests that must exist
+
+Each pins a mistake that is easy to make and hard to see:
+
+1. Unscored never counts as a pass
+2. A judge never receives a label — asserted at the type level
+3. A rubber-stamp judge is excluded from panel aggregates, but its verdicts are still written
+4. Unreadable replies are counted, never defaulted
+5. A metric below its sample floor is not reported at all
+6. `analyse` makes zero model calls
+7. Editing a taxonomy without bumping the version is an error
+8. Item-grain pass rate is never higher than field-grain pass rate
+9. Two runs on different taxonomy versions refuse to compare
+
+### Dependencies
+
+```
+   pyyaml          config
+   httpx           provider calls
+   numpy           stats
+
+   optional:
+     pandas / polars    dataframe input
+     pyarrow            parquet input
+```
+
+---
+
+## 12. v1 — what we are not building yet
+
+Each has a reason to wait and a seam already in place, so none requires a
+rewrite.
+
+### Copied fields — the third kind
+
+Values that live *in* the item: amounts, dates, names, IDs.
+
+```python
+COPIED = FieldKind(
+    name="copied",
+    checks=[value_in_source, span_matches, ...],
+    judge_task=GroundednessTask(),
+    metrics=[grounding_rate],
+)
+```
+
+The engine, gates, cache, panel and report do not change. This is the test of
+whether the seam in Section 4 is in the right place.
+
+**Why later:** the work here is assigned and free text. Copied is the
+well-trodden case and other tools cover it.
+
+### Derived thresholds
+
+Every threshold is currently a default you can change by hand. The honest
+version derives it from labelled data at a target precision:
+
+```
+   "we want to be right 90% of the time when we flag something"
+   → sweep, find the cut, report what recall it costs
+```
+
+**Why later:** it needs Mode 1 data. The `threshold_from` field is already on
+every finding, so it slots in.
+
+### A/B between two prompt versions, with significance
+
+M7 gives a plain comparison. The full version adds an exact test over the items
+where the two runs actually differ, both win rates (including and excluding
+ties, conservative first), and a pairwise judge that grades each item **twice
+with the order swapped**, scoring a tie when the verdict flips.
+
+Most items tie in a real A/B. Three net wins over 200 items is a coin flip, and
+quoting a win rate without the test is how underpowered changes get shipped.
+
+**Why later:** you need two real runs before it is worth anything.
+
+### Multi-label
+
+One item, two labels. Precision and recall become set operations, the confusion
+matrix becomes a co-occurrence matrix, tree scoring gets harder.
+
+**Why later:** v0 is scoped to single label. `Output.value` becoming a list is
+contained; the metrics are the real work.
+
+### Reasoning-model judges
+
+More accurate and better at ranking, but far more expensive, and they return
+empty replies when thinking eats the token budget — and those empties land on
+the hard items.
+
+**Why later:** cost. When it lands, it is opt-in per judge and ships with the
+guardrail that checks *which* items came back empty.
+
+### Cache at scale
+
+`verdicts.jsonl` is fine to a few hundred thousand rows. Beyond that it wants
+SQLite with an index on the cache key. The read/write path is behind one
+interface, so it is a swap, not a rewrite.
+
+### Warehouse in and out
+
+Reading items from a warehouse, writing findings back as tables. Files cover the
+first year; readers are already pluggable.
+
+### Multi-annotator workflow
+
+Assigning items to annotators, tracking who did what, adjudicating
+disagreements. Mode 2 only needs the *data* — two labels with annotator IDs,
+which `labels.jsonl` already carries. Producing that data is a different
+product.
+
+### Deliberately never
+
+| Not doing | Why |
+|---|---|
+| Generating the labels | This tool checks; it does not classify |
+| Prompt management | Separate concern, mature tools exist |
+| A dashboard | Files feed whatever you already use |
+| Streaming / per-item | Batch by design; wrap it if you need to |
