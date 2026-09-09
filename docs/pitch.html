@@ -1,0 +1,625 @@
+<title>llm-expectations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --paper:    #F1F3F3;
+    --panel:    #FAFBFB;
+    --raised:   #E3E8E8;
+    --ink:      #12181A;
+    --ink-2:    #4C5A5C;
+    --ink-3:    #77878A;
+    --rule:     #C6D0D0;
+    --rule-2:   #DDE4E4;
+
+    --amber:    #B4680F;
+    --amber-bg: #F6EADA;
+    --sage:     #35684A;
+    --sage-bg:  #E0EBE3;
+    --brick:    #9C3327;
+    --brick-bg: #F4E2DF;
+
+    --display: "Newsreader", Georgia, "Times New Roman", serif;
+    --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+    --col: 34rem;
+    --wide: 62rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:    #0D1214;
+      --panel:    #141C1F;
+      --raised:   #1C262A;
+      --ink:      #E9EFEF;
+      --ink-2:    #A0AFB1;
+      --ink-3:    #74868A;
+      --rule:     #29363A;
+      --rule-2:   #1E292C;
+
+      --amber:    #E4A057;
+      --amber-bg: #2A2016;
+      --sage:     #6FB187;
+      --sage-bg:  #16261C;
+      --brick:    #DE7967;
+      --brick-bg: #2B1815;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:    #0D1214;
+    --panel:    #141C1F;
+    --raised:   #1C262A;
+    --ink:      #E9EFEF;
+    --ink-2:    #A0AFB1;
+    --ink-3:    #74868A;
+    --rule:     #29363A;
+    --rule-2:   #1E292C;
+
+    --amber:    #E4A057;
+    --amber-bg: #2A2016;
+    --sage:     #6FB187;
+    --sage-bg:  #16261C;
+    --brick:    #DE7967;
+    --brick-bg: #2B1815;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  .col { max-width: var(--col); }
+
+  section {
+    padding: 3.5rem 0;
+    border-top: 1px solid var(--rule-2);
+  }
+  section:first-of-type { border-top: 0; }
+
+  .stack { display: flex; flex-direction: column; gap: 1.1rem; }
+  .stack-lg { display: flex; flex-direction: column; gap: 2rem; }
+
+  h1, h2, h3 { font-family: var(--display); font-weight: 600; text-wrap: balance; margin: 0; }
+
+  h1 {
+    font-size: clamp(2.6rem, 7vw, 4.4rem);
+    line-height: 1.02;
+    letter-spacing: -0.022em;
+  }
+  h2 {
+    font-size: clamp(1.6rem, 3.4vw, 2.2rem);
+    line-height: 1.14;
+    letter-spacing: -0.014em;
+  }
+  h3 {
+    font-family: var(--body);
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+  }
+
+  p { margin: 0; }
+  .lead { font-size: 1.15rem; line-height: 1.55; color: var(--ink-2); }
+  .muted { color: var(--ink-2); }
+  .small { font-size: 0.9rem; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  a { color: var(--ink); text-underline-offset: 3px; text-decoration-color: var(--rule); }
+  a:hover { text-decoration-color: var(--amber); }
+  a:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+
+  code, .mono { font-family: var(--mono); font-size: 0.9em; }
+
+  /* ---- the three marks: the page's spine ---- */
+  .mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.35em;
+    height: 1.35em;
+    flex: none;
+    font-family: var(--mono);
+    font-size: 0.85em;
+    font-weight: 600;
+    border: 1px solid currentColor;
+  }
+  .m-pass  { color: var(--sage);  background: var(--sage-bg); }
+  .m-fail  { color: var(--brick); background: var(--brick-bg); }
+  .m-unsc  { color: var(--amber); background: var(--amber-bg); }
+
+  /* ---- hero ---- */
+  .hero { padding: 4.5rem 0 3.5rem; }
+  .hero h1 { margin-bottom: 1.4rem; }
+  .hero .lead { max-width: 33rem; font-size: 1.22rem; }
+
+  .name {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--ink-2);
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+    margin-bottom: 2.6rem;
+  }
+  .tag {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.18rem 0.5rem;
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    background: var(--amber-bg);
+  }
+
+  /* ---- panels ---- */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    padding: 1.5rem;
+  }
+
+  .figure {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    overflow-x: auto;
+  }
+  .figure pre {
+    margin: 0;
+    padding: 1.5rem;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.65;
+    color: var(--ink-2);
+    white-space: pre;
+  }
+  .figure pre b { color: var(--ink); font-weight: 600; }
+  .figure pre .a { color: var(--amber); font-weight: 500; }
+  .figure pre .g { color: var(--sage); font-weight: 500; }
+  .figure pre .r { color: var(--brick); font-weight: 500; }
+  .cap {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding: 0.7rem 1.5rem;
+    border-top: 1px solid var(--rule-2);
+  }
+
+  /* ---- tables ---- */
+  .tw { overflow-x: auto; border: 1px solid var(--rule); background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+  th, td {
+    text-align: left;
+    padding: 0.85rem 1.2rem;
+    border-bottom: 1px solid var(--rule-2);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    background: var(--raised);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.k { font-weight: 500; }
+
+  /* ---- three-up ---- */
+  .three {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+  }
+  .three > div {
+    background: var(--panel);
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .three .n {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--amber);
+  }
+
+  /* ---- state list ---- */
+  .states { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--rule); }
+  .states > div {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    padding: 1.1rem 1.3rem;
+    background: var(--panel);
+    border-bottom: 1px solid var(--rule-2);
+  }
+  .states > div:last-child { border-bottom: 0; }
+  .states .t { font-weight: 600; }
+  .states .d { color: var(--ink-2); font-size: 0.94rem; }
+
+  /* ---- callout ---- */
+  .callout {
+    background: var(--amber-bg);
+    border: 1px solid var(--amber);
+    padding: 1.3rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .callout .h {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--amber);
+  }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding: 2.5rem 0 4rem;
+    color: var(--ink-2);
+    font-size: 0.92rem;
+  }
+
+  @media (max-width: 620px) {
+    body { font-size: 16px; }
+    section { padding: 2.75rem 0; }
+    .figure pre { font-size: 0.68rem; padding: 1.1rem; }
+    th, td { padding: 0.7rem 0.9rem; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <section class="hero">
+    <div class="name">
+      <span>llm-expectations</span>
+      <span class="tag">pre-alpha</span>
+    </div>
+    <h1>79% accurate.<br>Which 21%?</h1>
+    <p class="lead">
+      You used an AI to sort 50,000 support conversations into categories. It reports
+      a good score. You can read maybe 500 of them. Which 500?
+    </p>
+  </section>
+
+  <section class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow">The situation</p>
+      <h2>A number that sounds fine, and no way to check it</h2>
+      <p class="muted">
+        Teams now use language models to label, summarise and categorise huge piles of
+        text. The model always answers. It always sounds confident. Nobody can read the
+        pile to find out whether it was right.
+      </p>
+    </div>
+
+    <div class="figure">
+<pre>   50,000 conversations
+          │
+          ▼
+   ┌──────────────┐
+   │  the model   │   labels every one, in seconds
+   └──────┬───────┘
+          │
+          ▼
+   ┌──────────────┐
+   │  <span class="a">?????????</span>   │   <span class="a">nobody has read them</span>
+   └──────┬───────┘
+          │
+          ▼
+   decisions, reports, dashboards</pre>
+      <div class="cap">Fig 1 — the gap this tool fills</div>
+    </div>
+  </section>
+
+  <section class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow">Why the usual answers fail</p>
+      <h2>Three habits that feel like checking</h2>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>What people do</th><th>Why it doesn't work</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="k">Read 50 at random</td>
+            <td class="muted">Mistakes are uncommon and they clump together. A random handful
+            usually turns up nothing, which reads as good news.</td>
+          </tr>
+          <tr>
+            <td class="k">Quote an accuracy score</td>
+            <td class="muted">If 70% of your items belong to one category, a model that
+            always guesses that category scores 70% and knows nothing.</td>
+          </tr>
+          <tr>
+            <td class="k">Add a second AI to grade the first</td>
+            <td class="muted">Nobody graded the second one. A grader that approves
+            everything looks perfectly healthy from the outside.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow">What it does</p>
+      <h2>Three jobs, in order of how much they save you</h2>
+    </div>
+
+    <div class="three">
+      <div>
+        <p class="n">Ranks</p>
+        <h3>Which ones to open first</h3>
+        <p class="muted small">Instead of "79% accurate", you get an ordered list and a
+        straight answer: read the top 500 and you will find just over half the mistakes.</p>
+      </div>
+      <div>
+        <p class="n">Screens</p>
+        <h3>Checks the grader</h3>
+        <p class="muted small">A grader that approves 94% of everything passes every
+        other test ever written. One small table catches it, before you trust a single number.</p>
+      </div>
+      <div>
+        <p class="n">Diagnoses</p>
+        <h3>Finds broken categories</h3>
+        <p class="muted small">Sometimes two of your categories mean nearly the same
+        thing, and nobody — human or model — can tell them apart. No prompt fixes that.
+        This says so.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow">The idea underneath</p>
+      <h2>Three answers, not two</h2>
+      <p class="muted">
+        Almost every quality tool reports pass or fail. That forces a lie: when something
+        was never actually checked — the budget ran out, the grader timed out, the item
+        wasn't sampled — it quietly gets filed under pass.
+      </p>
+    </div>
+
+    <div class="states">
+      <div>
+        <span class="mark m-pass">✓</span>
+        <div>
+          <p class="t">Pass</p>
+          <p class="d">We checked it. It's fine.</p>
+        </div>
+      </div>
+      <div>
+        <span class="mark m-fail">✗</span>
+        <div>
+          <p class="t">Fail</p>
+          <p class="d">We checked it. It's wrong, and here's the evidence.</p>
+        </div>
+      </div>
+      <div>
+        <span class="mark m-unsc">○</span>
+        <div>
+          <p class="t">Not checked</p>
+          <p class="d">We did not look at this one, and here is exactly why.
+          It never turns into a pass.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <p class="muted">
+        That third mark is the whole product. A report that quietly stops checking and
+        still comes back green is worse than no report at all.
+      </p>
+    </div>
+  </section>
+
+  <section class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow">What you actually get</p>
+      <h2>A report that says what it can't tell you</h2>
+    </div>
+
+    <div class="figure">
+<pre>  <b>llm-expectations   2026-09-09_1432</b>          1,204 items    $0.34
+
+  <span class="g">GATES</span>   measurement sound      <span class="g">PASS</span>
+          grader beats guessing  <span class="g">PASS</span>   0.84  vs  0.50
+
+  <span class="a">┌ WHAT THIS RUN CANNOT TELL YOU ───────────────────────┐</span>
+  <span class="a">│</span>  ✗ whether the grader agrees with people on summaries <span class="a">│</span>
+  <span class="a">│</span>      no human ratings yet.                            <span class="a">│</span>
+  <span class="a">│</span>      about 100 rated summaries would unlock it.       <span class="a">│</span>
+  <span class="a">└──────────────────────────────────────────────────────┘</span>
+
+  <b>categories</b>
+    every label is a real one       100.0%   <span class="g">✓</span>
+    no category swallowing the set   31.0%   <span class="g">✓</span>   limit 50%
+    matches the written summary      94.1%   <span class="r">✗</span>   71 conflicts
+
+  <b>your graders</b>
+    grader        approves   unsure   unreadable
+    grader-a         71%        4%       0.3%
+    grader-b         58%        2%       0.7%
+    grader-c         94%        0%       0.0%   <span class="a">⚠ approves nearly
+                                                  everything</span>
+
+    <span class="a">fuzziest pair</span>   payment_failed <span class="a">↔</span> card_declined
+                    62 of 87 disagreements sit on this one boundary
+
+  <b>if you review...</b>
+    500 items  (1%)   you find <b>18%</b> of the mistakes
+    2,500      (5%)   you find <b>54%</b>
+    5,000     (10%)   you find <b>71%</b></pre>
+      <div class="cap">Fig 2 — trimmed from a real report layout</div>
+    </div>
+
+    <div class="col">
+      <p class="muted">
+        Three things happen there that you won't get elsewhere. It refuses to report
+        numbers it can't stand behind. It tells you one of your graders is asleep. And
+        it points at a pair of categories that are the actual problem — not the model.
+      </p>
+    </div>
+  </section>
+
+  <section class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow">The difference</p>
+      <h2>Before and after</h2>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>What you knew</th><th>What you know now</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="muted">"It's 79% accurate."</td>
+            <td class="k">Review these 500 and you'll catch a fifth of the errors.
+            Review 2,500 and you'll catch half.</td>
+          </tr>
+          <tr>
+            <td class="muted">"Our AI grader says quality is good."</td>
+            <td class="k">One of your three graders approves 94% of everything.
+            Its opinion has been excluded.</td>
+          </tr>
+          <tr>
+            <td class="muted">"The model keeps getting these two wrong."</td>
+            <td class="k">Those two categories overlap. The model isn't the problem;
+            the definitions are.</td>
+          </tr>
+          <tr>
+            <td class="muted">"Everything's green."</td>
+            <td class="k">Four numbers couldn't be computed, and here's what would
+            unlock each one.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow">Fit</p>
+      <h2>Who this is for</h2>
+    </div>
+
+    <div class="three">
+      <div>
+        <h3>You sort text at scale</h3>
+        <p class="muted small">Support conversations into reasons. Documents into types.
+        Feedback into themes. Hundreds or thousands at a time.</p>
+      </div>
+      <div>
+        <h3>You have an AI grading an AI</h3>
+        <p class="muted small">Already running a model to check another model's work,
+        and no way to know whether the checker is any good.</p>
+      </div>
+      <div>
+        <h3>You have no labelled data</h3>
+        <p class="muted small">Most of the tool works with zero human answers. It's
+        clear about which parts don't, and how few you'd need.</p>
+      </div>
+    </div>
+
+    <div class="col">
+      <p class="muted">
+        It does not label anything for you. It checks work that already exists —
+        whatever produced it.
+      </p>
+    </div>
+  </section>
+
+  <section class="stack-lg">
+    <div class="callout">
+      <p class="h">Honest status</p>
+      <p>
+        The design is finished and published. <strong>The code is not written yet.</strong>
+        A tool whose entire argument is "say what you can't stand behind" would be a poor
+        one to oversell.
+      </p>
+    </div>
+
+    <div class="col stack">
+      <h2>Where it's going</h2>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>Step</th><th>What you can do with it</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="num k">1</td><td class="k">One grader, end to end — a ranked list of what to review<span class="muted"> · first usable version</span></td></tr>
+          <tr><td class="num k">2</td><td class="muted">Free checks and the full report</td></tr>
+          <tr><td class="num k">3</td><td class="muted">A small panel of graders, and the broken-category finder</td></tr>
+          <tr><td class="num k">4</td><td class="k">Guardrails and confidence intervals — now the numbers hold up</td></tr>
+          <tr><td class="num k">5</td><td class="muted">Add human answers, get accuracy and the review-budget table</td></tr>
+          <tr><td class="num k">6</td><td class="k">Written summaries, not just categories</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="stack">
+    <p>
+      <strong>llm-expectations</strong> — quality checks for AI output that is a
+      judgement <em>about</em> a document, not a value copied <em>out of</em> one.
+      Open source, Apache&nbsp;2.0.
+    </p>
+    <p class="small muted">
+      Full design, including every threshold and what it defends against, is in
+      <code>DESIGN.md</code>.
+    </p>
+  </footer>
+
+</div>
