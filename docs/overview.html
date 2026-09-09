@@ -31,6 +31,13 @@
     --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
     --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
+    --c-series:   #1F5FA8;
+    --c-fail:     #B3304A;
+    --c-unscored: #B07A0C;
+    --c-pass:     #7E9092;
+    --c-band:     rgba(31,95,168,0.07);
+    --c-grid:     #DDE4E4;
+
     --col: 36rem;
     --wide: 68rem;
   }
@@ -52,6 +59,13 @@
       --sage-bg:  #16261C;
       --brick:    #DE7967;
       --brick-bg: #2B1815;
+
+      --c-series:   #3D82C4;
+      --c-fail:     #C0455F;
+      --c-unscored: #AD8420;
+      --c-pass:     #607678;
+      --c-band:     rgba(61,130,196,0.10);
+      --c-grid:     #223034;
     }
   }
 
@@ -71,6 +85,13 @@
     --sage-bg:  #16261C;
     --brick:    #DE7967;
     --brick-bg: #2B1815;
+
+    --c-series:   #3D82C4;
+    --c-fail:     #C0455F;
+    --c-unscored: #AD8420;
+    --c-pass:     #607678;
+    --c-band:     rgba(61,130,196,0.10);
+    --c-grid:     #223034;
   }
 
   * { box-sizing: border-box; }
@@ -254,6 +275,90 @@
     border-top: 1px solid var(--rule);
     padding: 2.25rem 0 4rem; color: var(--ink-2); font-size: 0.9rem;
   }
+
+  /* ---- dashboard ---- */
+  .dash { display: flex; flex-direction: column; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 1px; background: var(--rule); }
+  .tile { background: var(--panel); padding: 1.1rem 1.25rem; display: flex; flex-direction: column; gap: 0.25rem; }
+  .tile .lab {
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.11em;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+  .tile .val {
+    font-family: var(--mono); font-size: 1.5rem; font-weight: 500;
+    font-variant-numeric: tabular-nums; line-height: 1.1; color: var(--ink);
+  }
+  .tile .sub { font-size: 0.78rem; color: var(--ink-2); }
+  .tile .ok { color: var(--sage); font-weight: 600; }
+
+  .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1px; background: var(--rule); }
+  .chart { background: var(--panel); padding: 1.25rem; display: flex; flex-direction: column; gap: 0.9rem; }
+  .chart.wide { grid-column: 1 / -1; }
+  .chart .ttl { display: flex; flex-direction: column; gap: 0.15rem; }
+  .chart .ttl b { font-size: 0.92rem; font-weight: 600; }
+  .chart .ttl span { font-size: 0.8rem; color: var(--ink-2); }
+
+  .lgd { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; font-size: 0.76rem; color: var(--ink-2); }
+  .lgd i { display: inline-flex; align-items: center; gap: 0.35rem; font-style: normal; }
+  .lgd i::before { content: ""; width: 0.7rem; height: 0.7rem; background: currentColor; }
+  .lgd .s-pass { color: var(--c-pass); }
+  .lgd .s-fail { color: var(--c-fail); }
+  .lgd .s-unsc { color: var(--c-unscored); }
+  .lgd .s-ser  { color: var(--c-series); }
+  .lgd i b { color: var(--ink-2); font-weight: 400; }
+
+  /* bars */
+  .bars { display: flex; flex-direction: column; gap: 0.5rem; }
+  .bar {
+    display: grid; grid-template-columns: 7.4rem 1fr 3.8rem;
+    align-items: center; gap: 0.7rem;
+  }
+  .bar .nm { font-family: var(--mono); font-size: 0.76rem; color: var(--ink-2); }
+  .bar .trk { position: relative; height: 1.15rem; background: var(--raised); }
+  .bar .fil { position: absolute; inset: 0 auto 0 0; background: var(--c-series); border-radius: 0 3px 3px 0; }
+  .bar .fil.warn { background: var(--c-unscored); }
+  .bar .vl {
+    font-family: var(--mono); font-size: 0.78rem; font-variant-numeric: tabular-nums;
+    text-align: right; color: var(--ink);
+  }
+  .bar .vl.warn { color: var(--c-unscored); font-weight: 600; }
+  .band {
+    position: absolute; top: 0; bottom: 0; background: var(--c-band);
+    border-left: 1px dashed var(--c-series); border-right: 1px dashed var(--c-series);
+    pointer-events: none;
+  }
+  .thr {
+    position: absolute; top: -3px; bottom: -3px; width: 0;
+    border-left: 1px dashed var(--c-fail); pointer-events: none;
+  }
+
+  /* stacked composition */
+  .stk { display: flex; height: 2.1rem; gap: 2px; }
+  .stk > span { display: flex; align-items: center; justify-content: center; min-width: 2px; }
+  .stk .s1 { background: var(--c-pass); }
+  .stk .s2 { background: var(--c-fail); border-radius: 0; }
+  .stk .s3 { background: var(--c-unscored); border-radius: 0 3px 3px 0; }
+  .stk .s1 { border-radius: 3px 0 0 3px; }
+  .stk-l { display: flex; gap: 2px; margin-top: 0.4rem; }
+  .stk-l > span {
+    min-width: 0; font-family: var(--mono); font-size: 0.72rem;
+    font-variant-numeric: tabular-nums; color: var(--ink-2);
+    white-space: nowrap; overflow: hidden;
+  }
+
+  .plotwrap { overflow-x: auto; }
+  .plot { width: 100%; min-width: 30rem; height: auto; display: block; overflow: visible; }
+  .plot .gr { stroke: var(--c-grid); stroke-width: 1; }
+  .plot .ax { fill: var(--ink-3); font-family: var(--mono); font-size: 9px; }
+  .plot .ref { stroke: var(--ink-3); stroke-width: 1.5; stroke-dasharray: 4 3; fill: none; opacity: 0.65; }
+  .plot .ln { stroke: var(--c-series); stroke-width: 2; fill: none; stroke-linejoin: round; }
+  .plot .ar { fill: var(--c-series); opacity: 0.10; }
+  .plot .pt { fill: var(--c-series); stroke: var(--panel); stroke-width: 2; }
+  .plot .pt:hover { r: 7; }
+  .plot .lbl { fill: var(--ink); font-family: var(--mono); font-size: 9.5px; font-weight: 500; }
+
+  .mini { font-size: 0.82rem; }
+  .mini th, .mini td { padding: 0.4rem 0.7rem; }
 
   @media (max-width: 620px) {
     section { padding: 2.5rem 0; }
@@ -487,13 +592,155 @@
       </p>
     </div>
 
-    <div class="figure">
-<pre>  <b>review budget       errors found      wasted review</b>
-     500  (1%)              18%               2%
-   2,500  (5%)              54%              11%
-   5,000 (10%)              71%              29%</pre>
-      <div class="cap">Fig 2 — the deliverable, for a 50,000-row corpus</div>
+    <div class="dash">
+
+      <div class="tiles">
+        <div class="tile"><span class="lab">rows</span><span class="val">1,204</span><span class="sub">jtbd &middot; summary &middot; outcome</span></div>
+        <div class="tile"><span class="lab">judge calls</span><span class="val">2,332</span><span class="sub">1,204 triage + 900 panel + 228 claims</span></div>
+        <div class="tile"><span class="lab">spend</span><span class="val">$0.34</span><span class="sub">$0.00028 per row</span></div>
+        <div class="tile"><span class="lab">gates</span><span class="val ok">PASS</span><span class="sub">measurement &middot; judge vs baselines</span></div>
+      </div>
+
+      <div class="charts">
+
+        <div class="chart wide">
+          <div class="ttl">
+            <b>Review budget against errors found</b>
+            <span>Sort by risk score, review down the list. The dashed line is what random sampling would give you.</span>
+          </div>
+          <div class="plotwrap">
+          <svg class="plot" viewBox="0 0 560 220" role="img"
+               aria-label="Cumulative errors found as review budget increases. At a 1% budget 18% of errors are found, at 5% 54%, at 10% 71%. Random sampling would find a share equal to the budget.">
+            <g class="gr">
+              <line x1="44" y1="190" x2="544" y2="190"></line>
+              <line x1="44" y1="145.5" x2="544" y2="145.5"></line>
+              <line x1="44" y1="101" x2="544" y2="101"></line>
+              <line x1="44" y1="56.5" x2="544" y2="56.5"></line>
+              <line x1="44" y1="12" x2="544" y2="12"></line>
+            </g>
+            <g class="ax" text-anchor="end">
+              <text x="37" y="193">0%</text>
+              <text x="37" y="148.5">25%</text>
+              <text x="37" y="104">50%</text>
+              <text x="37" y="59.5">75%</text>
+              <text x="37" y="15">100%</text>
+            </g>
+            <g class="ax" text-anchor="middle">
+              <text x="44" y="205">0%</text>
+              <text x="169" y="205">25%</text>
+              <text x="294" y="205">50%</text>
+              <text x="419" y="205">75%</text>
+              <text x="544" y="205">100%</text>
+              <text x="294" y="217" fill="currentColor" opacity="0.55">review budget, share of rows</text>
+            </g>
+
+            <path class="ref" d="M44,190 L544,12"></path>
+            <path class="ar" d="M44,190 L49,157.96 L69,93.88 L94,63.62 L144,36.92 L294,17.34 L544,12 L544,190 Z"></path>
+            <path class="ln" d="M44,190 L49,157.96 L69,93.88 L94,63.62 L144,36.92 L294,17.34 L544,12"></path>
+
+            <circle class="pt" cx="49"  cy="157.96" r="5"><title>1% budget (500 rows) &rarr; 18% of errors found</title></circle>
+            <circle class="pt" cx="69"  cy="93.88"  r="5"><title>5% budget (2,500 rows) &rarr; 54% of errors found</title></circle>
+            <circle class="pt" cx="94"  cy="63.62"  r="5"><title>10% budget (5,000 rows) &rarr; 71% of errors found</title></circle>
+            <circle class="pt" cx="144" cy="36.92"  r="5"><title>20% budget &rarr; 86% of errors found</title></circle>
+            <circle class="pt" cx="294" cy="17.34"  r="5"><title>50% budget &rarr; 97% of errors found</title></circle>
+
+            <text class="lbl" x="78" y="88">54% at a 5% budget</text>
+            <text class="lbl" x="330" y="46" fill="currentColor" opacity="0.6">random sampling</text>
+          </svg>
+          </div>
+          <div class="lgd">
+            <i class="s-ser">risk-score ranking</i>
+            <i style="color:var(--ink-3)">random baseline</i>
+          </div>
+          <div class="tw">
+            <table class="mini">
+              <thead><tr><th>budget</th><th>rows</th><th>errors found</th><th>wasted review</th></tr></thead>
+              <tbody>
+                <tr><td class="num">1%</td><td class="num">500</td><td class="num">18%</td><td class="num">2%</td></tr>
+                <tr><td class="num">5%</td><td class="num">2,500</td><td class="num">54%</td><td class="num">11%</td></tr>
+                <tr><td class="num">10%</td><td class="num">5,000</td><td class="num">71%</td><td class="num">29%</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="chart">
+          <div class="ttl">
+            <b>Judge approval rate</b>
+            <span>Shaded band is the healthy range, 15&ndash;85%. Outside it, a judge is rubber-stamping or rejecting everything.</span>
+          </div>
+          <div class="bars">
+            <div class="bar">
+              <span class="nm">judge-a</span>
+              <span class="trk"><span class="band" style="left:15%;right:15%"></span><span class="fil" style="width:71%" title="judge-a approves 71% — inside the healthy band"></span></span>
+              <span class="vl">71%</span>
+            </div>
+            <div class="bar">
+              <span class="nm">judge-b</span>
+              <span class="trk"><span class="band" style="left:15%;right:15%"></span><span class="fil" style="width:58%" title="judge-b approves 58% — inside the healthy band"></span></span>
+              <span class="vl">58%</span>
+            </div>
+            <div class="bar">
+              <span class="nm">judge-c</span>
+              <span class="trk"><span class="band" style="left:15%;right:15%"></span><span class="fil warn" style="width:94%" title="judge-c approves 94% — above the 85% ceiling, excluded from panel aggregates"></span></span>
+              <span class="vl warn">94% &#9888;</span>
+            </div>
+          </div>
+          <div class="lgd">
+            <i class="s-ser">in band</i>
+            <i class="s-unsc">out of band &mdash; excluded</i>
+          </div>
+        </div>
+
+        <div class="chart">
+          <div class="ttl">
+            <b>Finding status</b>
+            <span>The third slice is the one other tools do not have. It never becomes a pass.</span>
+          </div>
+          <div>
+            <div class="stk">
+              <span class="s1" style="flex:82.1" title="pass — 2,964 findings"></span>
+              <span class="s2" style="flex:11.3" title="fail — 408 findings"></span>
+              <span class="s3" style="flex:6.6"  title="unscored — 238 findings; budget spent, or the judge did not answer"></span>
+            </div>
+            <div class="stk-l">
+              <span style="flex:82.1">82.1%</span>
+              <span style="flex:11.3">11.3%</span>
+              <span style="flex:6.6">6.6%</span>
+            </div>
+          </div>
+          <div class="lgd">
+            <i class="s-pass">pass <b>2,964</b></i>
+            <i class="s-fail">fail <b>408</b></i>
+            <i class="s-unsc">unscored <b>238</b></i>
+          </div>
+        </div>
+
+        <div class="chart wide">
+          <div class="ttl">
+            <b>Label distribution</b>
+            <span>Dashed line is the 50% collapse threshold. One label swallowing the corpus means the model stopped discriminating.</span>
+          </div>
+          <div class="bars">
+            <div class="bar"><span class="nm">payment_failed</span><span class="trk"><span class="thr" style="left:50%"></span><span class="fil" style="width:31%" title="payment_failed — 31% of rows"></span></span><span class="vl">31%</span></div>
+            <div class="bar"><span class="nm">password_reset</span><span class="trk"><span class="thr" style="left:50%"></span><span class="fil" style="width:22%" title="password_reset — 22% of rows"></span></span><span class="vl">22%</span></div>
+            <div class="bar"><span class="nm">refund_request</span><span class="trk"><span class="thr" style="left:50%"></span><span class="fil" style="width:17%" title="refund_request — 17% of rows"></span></span><span class="vl">17%</span></div>
+            <div class="bar"><span class="nm">cancel_sub</span><span class="trk"><span class="thr" style="left:50%"></span><span class="fil" style="width:13%" title="cancel_sub — 13% of rows"></span></span><span class="vl">13%</span></div>
+            <div class="bar"><span class="nm">data_export</span><span class="trk"><span class="thr" style="left:50%"></span><span class="fil" style="width:10%" title="data_export — 10% of rows"></span></span><span class="vl">10%</span></div>
+            <div class="bar"><span class="nm">sso_issue</span><span class="trk"><span class="thr" style="left:50%"></span><span class="fil" style="width:7%" title="sso_issue — 7% of rows"></span></span><span class="vl">7%</span></div>
+          </div>
+          <div class="lgd">
+            <i class="s-ser">share of rows</i>
+            <i class="s-fail">50% collapse threshold</i>
+          </div>
+        </div>
+
+      </div>
     </div>
+    <p class="muted small col">
+      Every figure above comes from one run folder and is reproducible from
+      <code>findings.jsonl</code> and <code>verdicts.jsonl</code> without a model call.
+    </p>
 
     <div class="col stack"><h3>Cost model</h3></div>
 
