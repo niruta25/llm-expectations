@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>llm-expectations</title>
+<meta name="description" content="Quality checks for LLM outputs that are judgements about a document, not values copied out of one.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --paper:  #F1F3F3;
+    --panel:  #FAFBFB;
+    --raised: #E3E8E8;
+    --ink:    #12181A;
+    --ink-2:  #4C5A5C;
+    --ink-3:  #77878A;
+    --rule:   #C6D0D0;
+    --rule-2: #DDE4E4;
+    --amber:  #B4680F;
+    --amber-bg: #F6EADA;
+
+    --display: "Newsreader", Georgia, "Times New Roman", serif;
+    --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:  #0D1214;
+      --panel:  #141C1F;
+      --raised: #1C262A;
+      --ink:    #E9EFEF;
+      --ink-2:  #A0AFB1;
+      --ink-3:  #74868A;
+      --rule:   #29363A;
+      --rule-2: #1E292C;
+      --amber:  #E4A057;
+      --amber-bg: #2A2016;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:  #0D1214;
+    --panel:  #141C1F;
+    --raised: #1C262A;
+    --ink:    #E9EFEF;
+    --ink-2:  #A0AFB1;
+    --ink-3:  #74868A;
+    --rule:   #29363A;
+    --rule-2: #1E292C;
+    --amber:  #E4A057;
+    --amber-bg: #2A2016;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    align-items: center;
+  }
+
+  .wrap {
+    max-width: 46rem;
+    margin: 0 auto;
+    padding: 4rem 1.5rem;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 2.5rem;
+  }
+
+  .name {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--ink-2);
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+  }
+  .tag {
+    font-family: var(--mono);
+    font-size: 0.67rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.16rem 0.5rem;
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    background: var(--amber-bg);
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: clamp(2rem, 5.5vw, 3rem);
+    line-height: 1.06;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  p { margin: 0; }
+  .lead { font-size: 1.1rem; line-height: 1.55; color: var(--ink-2); max-width: 34rem; }
+
+  .links { display: flex; flex-direction: column; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+
+  a.card {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: baseline;
+    gap: 0.4rem 1.5rem;
+    padding: 1.15rem 1.35rem;
+    background: var(--panel);
+    color: inherit;
+    text-decoration: none;
+  }
+  a.card:hover { background: var(--raised); }
+  a.card:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
+
+  a.card .t { font-weight: 600; font-size: 1.02rem; }
+  a.card .who {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+  a.card .d { grid-column: 1 / -1; color: var(--ink-2); font-size: 0.92rem; }
+
+  footer {
+    border-top: 1px solid var(--rule-2);
+    padding-top: 1.5rem;
+    color: var(--ink-2);
+    font-size: 0.88rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  footer code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--raised);
+    padding: 0.08em 0.34em;
+    border: 1px solid var(--rule-2);
+  }
+  footer a { color: var(--ink); text-underline-offset: 3px; text-decoration-color: var(--rule); }
+  footer a:hover { text-decoration-color: var(--amber); }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+  <div class="wrap">
+
+    <div class="name">
+      <span>llm-expectations</span>
+      <span class="tag">pre-alpha</span>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:1.1rem;">
+      <h1>Checking output that isn't in the input</h1>
+      <p class="lead">
+        Quality checks for AI output that is a judgement <em>about</em> a document —
+        a category, a summary — rather than a value copied <em>out of</em> one.
+      </p>
+    </div>
+
+    <div class="links">
+      <a class="card" href="pitch.html">
+        <span class="t">Why this exists</span>
+        <span class="who">anyone</span>
+        <span class="d">The problem in plain English, and what a report actually tells you.</span>
+      </a>
+      <a class="card" href="overview.html">
+        <span class="t">Architecture overview</span>
+        <span class="who">engineers</span>
+        <span class="d">Field kinds, the pipeline seam, judge design, guardrails, build order.</span>
+      </a>
+      <a class="card" href="https://github.com/niruta25/llm-expectations/blob/main/DESIGN.md">
+        <span class="t">Full design</span>
+        <span class="who">implementers</span>
+        <span class="d">Every decision, threshold and default, with what each one defends against.</span>
+      </a>
+    </div>
+
+    <footer>
+      <p>
+        Apache 2.0 · <a href="https://github.com/niruta25/llm-expectations">github.com/niruta25/llm-expectations</a>
+      </p>
+      <p>
+        The design is settled; the build has not started. <code>0.0.0</code> reserves the
+        name and has no functionality.
+      </p>
+    </footer>
+
+  </div>
+</body>
+</html>
