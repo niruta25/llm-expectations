@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>llm-expectations Architecture</title>
-<meta name="description" content="Architecture overview of llm-expectations: field kinds, pipeline seam, judge design, guardrails and build order.">
+<meta name="description" content="Architecture overview of llm-expectations for data engineers: sources, metrics, output schemas, consumption, and the pipeline design.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap">
@@ -32,7 +32,7 @@
     --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
     --col: 36rem;
-    --wide: 66rem;
+    --wide: 68rem;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -109,7 +109,9 @@
     font-size: 0.71rem; font-weight: 500;
     letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--ink-3);
+    display: flex; align-items: baseline; gap: 0.75rem;
   }
+  .eyebrow .step { color: var(--amber); font-weight: 600; }
 
   a { color: var(--ink); text-underline-offset: 3px; text-decoration-color: var(--rule); }
   a:hover { text-decoration-color: var(--amber); }
@@ -132,7 +134,6 @@
   .m-fail { color: var(--brick); background: var(--brick-bg); }
   .m-unsc { color: var(--amber); background: var(--amber-bg); }
 
-  /* ---- hero ---- */
   .hero { padding: 4rem 0 3rem; }
   .name {
     font-family: var(--mono); font-size: 0.8rem; font-weight: 500;
@@ -149,7 +150,6 @@
   .hero h1 { margin-bottom: 1.2rem; }
   .hero .lead { max-width: 35rem; }
 
-  /* ---- figures ---- */
   .figure { background: var(--panel); border: 1px solid var(--rule); overflow-x: auto; }
   .figure pre {
     margin: 0; padding: 1.4rem;
@@ -167,7 +167,6 @@
     padding: 0.65rem 1.4rem; border-top: 1px solid var(--rule-2);
   }
 
-  /* ---- code ---- */
   .code { border: 1px solid var(--rule); background: var(--panel); overflow-x: auto; }
   .code .h {
     font-family: var(--mono); font-size: 0.68rem;
@@ -182,12 +181,12 @@
   }
   .code pre .c { color: var(--ink-3); font-style: italic; }
   .code pre .k { color: var(--amber); }
+  .code pre .s { color: var(--sage); }
 
-  /* ---- tables ---- */
   .tw { overflow-x: auto; border: 1px solid var(--rule); background: var(--panel); }
   table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
   th, td {
-    text-align: left; padding: 0.75rem 1.1rem;
+    text-align: left; padding: 0.7rem 1.1rem;
     border-bottom: 1px solid var(--rule-2); vertical-align: top;
   }
   tr:last-child td { border-bottom: 0; }
@@ -198,12 +197,12 @@
     border-bottom: 1px solid var(--rule); white-space: nowrap;
   }
   td.k { font-weight: 500; }
-  td.mono, th.mono { font-family: var(--mono); font-size: 0.84rem; white-space: nowrap; }
+  td.mono, th.mono { font-family: var(--mono); font-size: 0.83rem; white-space: nowrap; }
+  td.type { font-family: var(--mono); font-size: 0.8rem; color: var(--amber); white-space: nowrap; }
   td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .sh { color: var(--sage); font-family: var(--mono); font-size: 0.78rem; }
   .df { color: var(--amber); font-family: var(--mono); font-size: 0.78rem; }
 
-  /* ---- grids ---- */
   .grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
     gap: 1px; background: var(--rule); border: 1px solid var(--rule);
@@ -220,7 +219,6 @@
   .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; align-items: start; }
   @media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
 
-  /* ---- states ---- */
   .states { border: 1px solid var(--rule); }
   .states > div {
     display: flex; gap: 1rem; align-items: flex-start;
@@ -239,6 +237,19 @@
     letter-spacing: 0.1em; text-transform: uppercase; color: var(--amber);
   }
 
+  .toc {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+  }
+  .toc a {
+    background: var(--panel); padding: 0.9rem 1.1rem;
+    text-decoration: none; color: inherit;
+    display: flex; flex-direction: column; gap: 0.2rem;
+  }
+  .toc a:hover { background: var(--raised); }
+  .toc .s { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em; color: var(--amber); }
+  .toc .l { font-size: 0.9rem; font-weight: 500; }
+
   footer {
     border-top: 1px solid var(--rule);
     padding: 2.25rem 0 4rem; color: var(--ink-2); font-size: 0.9rem;
@@ -248,7 +259,7 @@
     section { padding: 2.5rem 0; }
     .figure pre { font-size: 0.66rem; padding: 1rem; }
     .code pre { font-size: 0.72rem; padding: 1rem; }
-    th, td { padding: 0.65rem 0.85rem; }
+    th, td { padding: 0.6rem 0.8rem; }
   }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
@@ -262,72 +273,442 @@
       <span>llm-expectations</span>
       <span class="tag">architecture overview</span>
     </div>
-    <h1>Checking output<br>that isn't in the input</h1>
+    <h1>A quality job for<br>model output</h1>
     <p class="lead">
-      Extraction QA rests on one free check: is this value present in the source text?
-      For a category label or a written summary, it isn't — and never was.
-      Everything here follows from that.
+      It runs after your inference pipeline, reads the rows it produced, and writes
+      findings you can load and query. No service, no dashboard, no orchestration of
+      its own — a CLI that reads files and writes files.
     </p>
   </section>
 
   <section class="stack-lg">
+    <nav class="toc">
+      <a href="#job"><span class="s">01</span><span class="l">The job</span></a>
+      <a href="#source"><span class="s">02</span><span class="l">Source</span></a>
+      <a href="#metrics"><span class="s">03</span><span class="l">Metrics</span></a>
+      <a href="#output"><span class="s">04</span><span class="l">Output schemas</span></a>
+      <a href="#consume"><span class="s">05</span><span class="l">Consuming it</span></a>
+      <a href="#pipeline"><span class="s">06</span><span class="l">Pipeline</span></a>
+      <a href="#judges"><span class="s">07</span><span class="l">Judges</span></a>
+      <a href="#guardrails"><span class="s">08</span><span class="l">Guardrails</span></a>
+      <a href="#build"><span class="s">09</span><span class="l">Build order</span></a>
+    </nav>
+  </section>
+
+  <!-- 01 -->
+  <section id="job" class="stack-lg">
     <div class="col stack">
-      <p class="eyebrow">The founding constraint</p>
-      <h2>Three kinds of field, and only one is groundable</h2>
+      <p class="eyebrow"><span class="step">01</span> The job</p>
+      <h2>Where it sits</h2>
+      <p class="muted">
+        Your pipeline classifies or summarises a corpus. This reads what it wrote and
+        answers three questions: which rows should a human open, how good is the set
+        overall, and which numbers are not trustworthy enough to report.
+      </p>
+    </div>
+
+    <div class="figure">
+<pre>  <b>your pipeline</b>                       <b>llm-expectations</b>
+  ─────────────                         ────────────────
+
+  items ──► model ──► outputs.jsonl ──►  free checks
+                                         judges          ──►  findings.jsonl
+                                         metrics              verdicts.jsonl
+                                                              metrics.json
+                                                              report.md
+                                                                   │
+                                                                   ▼
+                                                         warehouse · BI · alerts
+
+           <span class="d">observe-only. it never calls your extractor</span>
+           <span class="d">and never writes to your tables.</span></pre>
+      <div class="cap">Fig 1 — a downstream quality job, not a wrapper around your inference</div>
+    </div>
+
+    <div class="col stack">
+      <h3>What it is checking</h3>
+      <p class="muted small">
+        Not values copied out of a document — those you verify with a string search, and
+        other tools already do. This covers output that is a <em>judgement about</em> the
+        document, where nothing in the source can confirm it.
+      </p>
     </div>
 
     <div class="tw">
       <table>
         <thead>
-          <tr>
-            <th>Kind</th><th>Example</th><th>In the source?</th><th>How you check it</th>
-          </tr>
+          <tr><th>Kind</th><th>Example</th><th>In the source?</th><th>How it gets checked</th></tr>
         </thead>
         <tbody>
-          <tr>
-            <td class="k mono">copied</td>
-            <td class="muted"><code>total: $2,450.00</code></td>
-            <td class="sh">yes</td>
-            <td class="muted">Search the text. Free, and strong enough to gate everything downstream.</td>
-          </tr>
           <tr>
             <td class="k mono">assigned</td>
             <td class="muted"><code>jtbd: billing.payment_failed</code></td>
             <td class="df">no</td>
-            <td class="muted">Compare against a right answer — human, or a judge standing in for one.</td>
+            <td class="muted">Compare against a right answer — human, or a judge standing in for one</td>
           </tr>
           <tr>
             <td class="k mono">free_text</td>
             <td class="muted"><code>summary: "card declined at renewal"</code></td>
             <td class="df">no</td>
-            <td class="muted">No single right answer exists. Hunt for specific defects instead.</td>
+            <td class="muted">No single right answer exists. Hunt for specific defects</td>
+          </tr>
+          <tr>
+            <td class="k mono">copied</td>
+            <td class="muted"><code>total: $2,450.00</code></td>
+            <td class="sh">yes</td>
+            <td class="muted">Search the text. Free, and it gates everything downstream — <em>v1</em></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <p class="h">The cost consequence, up front</p>
+      <p class="small">
+        For <code>copied</code> fields the free check is predictive, so you only pay a
+        judge for suspicious rows. For <code>assigned</code> fields the free checks catch
+        <em>format</em> problems, not <em>wrongness</em> — a well-formed label that is
+        simply the wrong one passes all of them. So one judge sees every row. That is the
+        whole bill, and the design says so rather than burying it.
+      </p>
+    </div>
+  </section>
+
+  <!-- 02 -->
+  <section id="source" class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow"><span class="step">02</span> Source</p>
+      <h2>Five inputs, joined on <code>item_id</code></h2>
+      <p class="muted">
+        Kept separate because they change on different schedules. Re-run the model and
+        outputs change while items don't. Add labels later and nothing else moves. The
+        taxonomy evolves on its own.
+      </p>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>File</th><th>Grain</th><th>Required</th><th>Changes when</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="k mono">items.jsonl</td><td class="muted">one row per item</td><td class="sh">yes</td><td class="muted">your corpus grows</td></tr>
+          <tr><td class="k mono">outputs.jsonl</td><td class="muted">one row per item, fields as columns</td><td class="sh">yes</td><td class="muted">every inference run</td></tr>
+          <tr><td class="k mono">schema.yml</td><td class="muted">field → kind</td><td class="sh">yes</td><td class="muted">you add a field</td></tr>
+          <tr><td class="k mono">taxonomy.yml</td><td class="muted">versioned label tree</td><td class="muted">assigned fields</td><td class="muted">definitions evolve</td></tr>
+          <tr><td class="k mono">judges.yml</td><td class="muted">models, keys, panel wiring</td><td class="muted">judged checks</td><td class="muted">you swap a model</td></tr>
+          <tr><td class="k mono">labels.jsonl</td><td class="muted">one row per (item, field, annotator)</td><td class="df">optional</td><td class="muted">you annotate more</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="split">
+      <div class="code">
+        <div class="h">outputs.jsonl — what your model already returns</div>
+<pre>{"item_id": "s-1042",
+ "jtbd":    "billing.payment_failed",
+ "summary": "Maya's card 4471 was
+             declined at renewal.",
+ "outcome": "resolved",
+ "confidence": 0.82}</pre>
+      </div>
+      <div class="code">
+        <div class="h">labels.jsonl — annotator id is what makes mode 2 possible</div>
+<pre>{"item_id":"s-1042","field":"jtbd",
+ "label":"billing.payment_failed",
+ "annotator":"ann-1"}
+
+{"item_id":"s-1042","field":"jtbd",
+ "label":"billing.card_declined",
+ "annotator":"ann-2"}   <span class="c">← disagree</span></pre>
+      </div>
+    </div>
+
+    <div class="col stack">
+      <h3>Formats</h3>
+      <p class="muted small">
+        JSONL by default because it streams — you can point it at 500,000 rows without
+        loading them. CSV, Parquet, and pandas or polars frames go through swappable
+        readers. Warehouse sources are v1; files cover the first year.
+      </p>
+      <h3>Credentials</h3>
+      <p class="muted small">
+        <code>judges.yml</code> references API keys by environment-variable
+        <em>name</em>, never value, so the config is safe to commit next to your DAGs.
+      </p>
+    </div>
+  </section>
+
+  <!-- 03 -->
+  <section id="metrics" class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow"><span class="step">03</span> Metrics</p>
+      <h2>What gets computed, and what it costs</h2>
+      <p class="muted">
+        Most of it needs no human labels. What a field gets depends on its
+        <strong>mode</strong>, decided per field and recomputed every run.
+      </p>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th class="mono">mode</th><th>You supply</th><th>You get</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="k mono">0</td>
+            <td class="muted">nothing</td>
+            <td class="muted">label validity · distribution and collapse · drift vs last run ·
+            abstention rate · judge approval rates · relative leniency · cross-field
+            consistency · fuzzy label pairs · <strong>triage ranking</strong></td>
+          </tr>
+          <tr>
+            <td class="k mono">1</td>
+            <td class="muted">~100 labelled</td>
+            <td class="muted">+ accuracy · macro F1 · per-label precision and recall ·
+            confusion matrix · tree buckets · judge direction · confidence calibration ·
+            <strong>the operating-point table</strong></td>
+          </tr>
+          <tr>
+            <td class="k mono">2</td>
+            <td class="muted">~100 double-labelled</td>
+            <td class="muted">+ whether the taxonomy is actually crisp — and everything
+            above becomes trustworthy</td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <div class="col stack">
-      <p class="muted">
-        v0 builds <code>assigned</code> and <code>free_text</code>. <code>copied</code> is
-        v1 — the seam is in place, and adding it should touch no engine code.
+      <h3>The headline is an operating point, not an AUC</h3>
+      <p class="muted small">
+        "AUC 0.84" cannot go into a capacity plan. This can:
       </p>
     </div>
 
-    <div class="callout">
-      <p class="h">The consequence that costs money</p>
-      <p class="small">
-        For <code>copied</code> fields the free check is predictive, so you only pay a
-        judge for the suspicious ones. For <code>assigned</code> fields the free checks
-        catch <em>format</em> problems, not <em>wrongness</em> — a well-formed label that
-        is simply wrong passes all of them. So one judge has to see every item. That is
-        the whole bill, and the design says so rather than hiding it.
+    <div class="figure">
+<pre>  <b>review budget       errors found      wasted review</b>
+     500  (1%)              18%               2%
+   2,500  (5%)              54%              11%
+   5,000 (10%)              71%              29%</pre>
+      <div class="cap">Fig 2 — the deliverable, for a 50,000-row corpus</div>
+    </div>
+
+    <div class="col stack"><h3>Cost model</h3></div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Component</th><th class="mono">calls</th><th>Scope</th></tr></thead>
+        <tbody>
+          <tr><td class="k">Free checks</td><td class="num sh">0</td><td class="muted">every row, every run</td></tr>
+          <tr><td class="k">Triage judge</td><td class="num">1 × rows</td><td class="muted">every row — this is the bill</td></tr>
+          <tr><td class="k">Panel</td><td class="num">3 × sample</td><td class="muted">~300 rows, configurable — a rounding error</td></tr>
+          <tr><td class="k">Claim check (free text)</td><td class="num">~0.2 × rows</td><td class="muted">flagged rows plus an audit stratum</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col">
+      <p class="muted small">
+        Every output row carries <code>cost_usd</code>, so spend is queryable by check,
+        field, judge and run. A budget cap marks rows
+        <span class="mark m-unsc">○</span> unscored rather than silently passing them.
       </p>
     </div>
   </section>
 
-  <section class="stack-lg">
+  <!-- 04 -->
+  <section id="output" class="stack-lg">
     <div class="col stack">
-      <p class="eyebrow">Pipeline</p>
+      <p class="eyebrow"><span class="step">04</span> Output schemas</p>
+      <h2>Four files per run, flat and loadable</h2>
+    </div>
+
+    <div class="figure">
+<pre>  out/
+    <b>index.jsonl</b>                        <span class="d">← one row per run. the fact table.</span>
+    2026-09-09_1432_jtbd-p8/
+      <b>run.json</b>       settings, modes, gate results, totals
+      <b>findings.jsonl</b> one row per (item, field, check)
+      <b>verdicts.jsonl</b> one row per judge call — also the cache
+      <b>metrics.json</b>   aggregates with confidence intervals
+      report.md      human readable</pre>
+      <div class="cap">Fig 3 — timestamped folders; several runs a day never collide</div>
+    </div>
+
+    <div class="col stack"><h3>findings.jsonl</h3></div>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Column</th><th class="mono">type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="k mono">run_id</td><td class="type">string</td><td class="muted">joins to <code>index.jsonl</code></td></tr>
+          <tr><td class="k mono">check</td><td class="type">string</td><td class="muted">which check produced this</td></tr>
+          <tr><td class="k mono">grain</td><td class="type">enum</td><td class="muted">field · item · corpus</td></tr>
+          <tr><td class="k mono">item_id</td><td class="type">string</td><td class="muted">null at corpus grain</td></tr>
+          <tr><td class="k mono">field</td><td class="type">string</td><td class="muted">null at item and corpus grain</td></tr>
+          <tr><td class="k mono">status</td><td class="type">enum</td><td class="muted"><strong>pass · fail · unscored</strong></td></tr>
+          <tr><td class="k mono">skip_reason</td><td class="type">string</td><td class="muted">non-null only when unscored</td></tr>
+          <tr><td class="k mono">score</td><td class="type">float</td><td class="muted">nullable</td></tr>
+          <tr><td class="k mono">threshold</td><td class="type">float</td><td class="muted">nullable</td></tr>
+          <tr><td class="k mono">threshold_from</td><td class="type">string</td><td class="muted">default · config · calibration:id — what makes an audit possible</td></tr>
+          <tr><td class="k mono">evidence</td><td class="type">json</td><td class="muted">why, not just what</td></tr>
+          <tr><td class="k mono">judge</td><td class="type">string</td><td class="muted">null for free checks</td></tr>
+          <tr><td class="k mono">cost_usd</td><td class="type">float</td><td class="muted">attributed once, never double counted</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col stack"><h3>verdicts.jsonl</h3></div>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Column</th><th class="mono">type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="k mono">run_id, judge, model</td><td class="type">string</td><td class="muted">one row per judge, never averaged at write time</td></tr>
+          <tr><td class="k mono">item_id, field</td><td class="type">string</td><td class="muted"></td></tr>
+          <tr><td class="k mono">verdict</td><td class="type">enum</td><td class="muted">true · false · cannot_decide</td></tr>
+          <tr><td class="k mono">confidence</td><td class="type">float</td><td class="muted">feeds the triage risk score</td></tr>
+          <tr><td class="k mono">reason</td><td class="type">string</td><td class="muted">one sentence — what a reviewer reads</td></tr>
+          <tr><td class="k mono">detail</td><td class="type">json</td><td class="muted">claim lists, for free text</td></tr>
+          <tr><td class="k mono">tokens_in, tokens_out</td><td class="type">int</td><td class="muted"></td></tr>
+          <tr><td class="k mono">cost_usd, latency_ms</td><td class="type">float</td><td class="muted"></td></tr>
+          <tr><td class="k mono">cache_hit</td><td class="type">bool</td><td class="muted">zero cost when true</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col stack"><h3>Three statuses, not two</h3></div>
+
+    <div class="states">
+      <div>
+        <span class="mark m-pass">✓</span>
+        <div><p class="t">pass</p><p class="muted small">Checked, and fine.</p></div>
+      </div>
+      <div>
+        <span class="mark m-fail">✗</span>
+        <div><p class="t">fail</p><p class="muted small">Checked, and wrong. Evidence attached.</p></div>
+      </div>
+      <div>
+        <span class="mark m-unsc">○</span>
+        <div>
+          <p class="t">unscored</p>
+          <p class="muted small">Not sampled · budget spent · judge returned nothing ·
+          check does not apply. <code>skip_reason</code> says which. Never becomes a pass.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <p class="muted small">
+        Collapse this to a boolean and a run that quietly stopped checking reports green.
+        Budget exhaustion is the common case, and it is exactly when you least want a
+        clean dashboard.
+      </p>
+    </div>
+  </section>
+
+  <!-- 05 -->
+  <section id="consume" class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow"><span class="step">05</span> Consuming it</p>
+      <h2>Load the files and query them</h2>
+      <p class="muted">
+        There is no dashboard and there will not be one — the output is shaped to feed
+        whatever you already run. <code>index.jsonl</code> is the run-level fact table;
+        findings and verdicts are the detail.
+      </p>
+    </div>
+
+    <div class="code">
+      <div class="h">the four views worth building first</div>
+<pre><span class="c">-- 1. coverage rot: what are we quietly not checking?</span>
+<span class="k">SELECT</span> check, skip_reason, count(*) <span class="k">AS</span> n
+<span class="k">FROM</span> findings <span class="k">WHERE</span> status = <span class="s">'unscored'</span>
+<span class="k">GROUP BY</span> 1, 2 <span class="k">ORDER BY</span> n <span class="k">DESC</span>;
+
+<span class="c">-- 2. the grain gap: field pass rate always flatters item pass rate</span>
+<span class="k">SELECT</span> grain, avg(<span class="k">CASE WHEN</span> status = <span class="s">'pass'</span> <span class="k">THEN</span> 1.0 <span class="k">ELSE</span> 0 <span class="k">END</span>)
+<span class="k">FROM</span> findings <span class="k">WHERE</span> status &lt;&gt; <span class="s">'unscored'</span> <span class="k">GROUP BY</span> 1;
+
+<span class="c">-- 3. judge health over time — catches a grader going stale</span>
+<span class="k">SELECT</span> r.started_at, v.judge,
+       avg(<span class="k">CASE WHEN</span> v.verdict = <span class="s">'true'</span> <span class="k">THEN</span> 1.0 <span class="k">ELSE</span> 0 <span class="k">END</span>) <span class="k">AS</span> approval_rate
+<span class="k">FROM</span> verdicts v <span class="k">JOIN</span> runs r <span class="k">USING</span> (run_id)
+<span class="k">GROUP BY</span> 1, 2 <span class="k">ORDER BY</span> 1;
+
+<span class="c">-- 4. undefended thresholds: numbers somebody typed</span>
+<span class="k">SELECT</span> check, count(*)
+<span class="k">FROM</span> findings <span class="k">WHERE</span> threshold_from = <span class="s">'default'</span> <span class="k">AND</span> status = <span class="s">'fail'</span>
+<span class="k">GROUP BY</span> 1;</pre>
+    </div>
+
+    <div class="col stack">
+      <h3>Alert on the derived views, not on failure counts</h3>
+      <p class="muted small">
+        A rising share of <code>unscored</code> means you are checking less than you
+        think. A widening grain gap means errors are spreading across fields. A judge's
+        approval rate drifting means your measuring instrument moved, not your quality.
+      </p>
+    </div>
+
+    <div class="split">
+      <div class="code">
+        <div class="h">orchestration — it is just a CLI task</div>
+<pre>llm-expectations plan     run.yml
+<span class="c"># cost estimate, issues no calls</span>
+
+llm-expectations run      run.yml
+<span class="c"># collect + analyse</span>
+
+llm-expectations analyse  out/&lt;run&gt;/
+<span class="c"># re-analyse from cache, free</span>
+
+llm-expectations compare  out/a out/b
+llm-expectations check    taxonomy.yml</pre>
+      </div>
+      <div class="stack">
+        <h3>Reproducibility</h3>
+        <p class="muted small">
+          Same inputs plus the same cache produce the same output.
+          <code>analyse</code> is deterministic and issues zero model calls.
+        </p>
+        <h3>Lineage</h3>
+        <p class="muted small">
+          Every run stamps the model, prompt version and taxonomy version. Two runs whose
+          stamps differ are not comparable, and the tool refuses to compare them rather
+          than drawing a trend line across a definition change.
+        </p>
+        <h3>Incremental cost</h3>
+        <p class="muted small">
+          The verdict cache is keyed on judge, model, prompt hash and row content, so
+          re-running a grown corpus pays only for the new rows.
+        </p>
+      </div>
+    </div>
+
+    <div class="figure">
+<pre>   <b>COLLECT</b>  ──► verdicts.jsonl          <span class="d">costs money. run once.</span>
+                        │
+                        ▼
+   <b>ANALYSE</b>  ◄────────┘                  <span class="g">free. run a hundred times.</span>
+
+   cache key = (judge, model, prompt hash, item, field, output value)</pre>
+      <div class="cap">Fig 4 — the only expensive operation is isolated behind a file</div>
+    </div>
+
+    <div class="col">
+      <p class="muted small">
+        Change a threshold, add a check, fix a reporting bug, try a different target —
+        re-run against the cache and pay nothing. Cheap reporting code that only ever
+        runs after an expensive collection is its own failure mode; this removes it.
+      </p>
+    </div>
+  </section>
+
+  <!-- 06 -->
+  <section id="pipeline" class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow"><span class="step">06</span> Pipeline</p>
       <h2>Twelve stages, two of them kind-specific</h2>
     </div>
 
@@ -348,7 +729,7 @@
   10  aggregate metrics                         <span class="a">part shared</span>
   11  <b>GATE 2</b> — judge vs trivial baselines       <span class="g">shared</span>
   12  report                                    <span class="g">shared</span></pre>
-      <div class="cap">Fig 1 — roughly 60% of the code is shared; the rest is small, independent functions</div>
+      <div class="cap">Fig 5 — about 60% of the code is shared across field kinds</div>
     </div>
 
     <div class="split">
@@ -370,23 +751,18 @@
       </div>
     </div>
 
-    <div class="col">
-      <p class="muted small">
-        The test of the seam: adding <code>copied</code> means writing one check list and
-        one prompt. If it requires touching the runner, the seam was in the wrong place.
-      </p>
-    </div>
-  </section>
-
-  <section class="stack-lg">
     <div class="col stack">
-      <p class="eyebrow">Data model</p>
-      <h2>Labels arrive on a separate path</h2>
-      <p class="muted">
-        A judge grading itself against the answer key is the easiest mistake in this
-        whole space, and the hardest to spot afterwards — the numbers come out
-        beautiful. So it's prevented by wiring, not by a convention someone has to
-        remember.
+      <h3>Checks come in three grains</h3>
+      <p class="muted small">
+        <strong>field</strong> — one row, one column. <strong>item</strong> — one row,
+        several columns, which is where cross-field consistency lives ("does the summary
+        agree with the label?"). <strong>corpus</strong> — the whole batch: distribution,
+        drift, boilerplate.
+      </p>
+      <h3>Labels arrive on a path the judge cannot see</h3>
+      <p class="muted small">
+        A judge graded against the answer key produces beautiful, worthless numbers.
+        Prevented by the function signature, not by a convention someone has to remember.
       </p>
     </div>
 
@@ -397,64 +773,15 @@
 
    Label  ────────────────────────────►  metrics only
 
-          <span class="a">the judge-calling code does not accept labels.</span>
-          <span class="a">it is not a rule. it is a function signature.</span></pre>
-      <div class="cap">Fig 2 — no path from Label to a judge</div>
-    </div>
-
-    <div class="tw">
-      <table>
-        <thead><tr><th>Type</th><th>What it holds</th></tr></thead>
-        <tbody>
-          <tr><td class="k mono">Item</td><td class="muted">The unit — a session, ticket, document</td></tr>
-          <tr><td class="k mono">Schema</td><td class="muted">Each field and its kind</td></tr>
-          <tr><td class="k mono">Taxonomy</td><td class="muted">A versioned label tree, hashed and stamped into every run</td></tr>
-          <tr><td class="k mono">Output</td><td class="muted">What the model produced for one item + field</td></tr>
-          <tr><td class="k mono">Label</td><td class="muted">A human answer, with the annotator's id. Optional.</td></tr>
-          <tr><td class="k mono">Verdict</td><td class="muted">One judge's call on one output, with a one-sentence reason</td></tr>
-          <tr><td class="k mono">Finding</td><td class="muted">A check result: pass / fail / unscored, with evidence</td></tr>
-        </tbody>
-      </table>
+          <span class="a">the judge-calling code does not accept labels.</span></pre>
+      <div class="cap">Fig 6 — no path from Label to a judge</div>
     </div>
   </section>
 
-  <section class="stack-lg">
+  <!-- 07 -->
+  <section id="judges" class="stack-lg">
     <div class="col stack">
-      <p class="eyebrow">Result states</p>
-      <h2>Unscored is a first-class answer</h2>
-    </div>
-
-    <div class="states">
-      <div>
-        <span class="mark m-pass">✓</span>
-        <div><p class="t">pass</p><p class="muted small">Checked, and fine.</p></div>
-      </div>
-      <div>
-        <span class="mark m-fail">✗</span>
-        <div><p class="t">fail</p><p class="muted small">Checked, and wrong. Evidence attached.</p></div>
-      </div>
-      <div>
-        <span class="mark m-unsc">○</span>
-        <div>
-          <p class="t">unscored</p>
-          <p class="muted small">Not sampled · budget spent · judge returned nothing ·
-          check doesn't apply. Never converts to a pass.</p>
-        </div>
-      </div>
-    </div>
-
-    <div class="col">
-      <p class="muted small">
-        Collapse this to a boolean and a run that quietly stopped checking reports green.
-        Budget exhaustion is the common case, and it is exactly when you least want a
-        clean dashboard.
-      </p>
-    </div>
-  </section>
-
-  <section class="stack-lg">
-    <div class="col stack">
-      <p class="eyebrow">Judges</p>
+      <p class="eyebrow"><span class="step">07</span> Judges</p>
       <h2>Two jobs, wired separately</h2>
       <p class="muted">
         A panel and a single judge answer different questions and cost different amounts.
@@ -463,43 +790,36 @@
     </div>
 
     <div class="figure">
-<pre>  <b>PANEL</b>    3 judges × ~300 items          <span class="d">~900 calls</span>
+<pre>  <b>PANEL</b>    3 judges × ~300 rows           <span class="d">~900 calls</span>
            ├─ quality estimate, with an interval
            ├─ which label pairs the judges keep splitting on
            └─ side-by-side health check of the judges
 
-  <b>TRIAGE</b>   1 judge × every item           <span class="d">50,000 calls</span>
-           └─ risk = 1 − mean confidence across the item's fields
-              sort desc, review down the list until budget runs out
-
-           <span class="a">the panel is a rounding error.</span>
-           <span class="a">the triage judge is the entire bill.</span></pre>
-      <div class="cap">Fig 3 — scope and cost, for a 50k-item corpus</div>
+  <b>TRIAGE</b>   1 judge × every row            <span class="d">50,000 calls</span>
+           └─ risk = 1 − mean confidence across the row's fields
+              sort desc, review until the budget runs out</pre>
+      <div class="cap">Fig 7 — scope and cost, for a 50,000-row corpus</div>
     </div>
 
     <div class="split">
-      <div class="code">
-        <div class="h">one Verdict type, both kinds</div>
-<pre>Verdict:
-  judge       <span class="c">"judge-b"</span>
-  item_id     <span class="c">"s-1042"</span>
-  field       <span class="c">"summary"</span>
-  verdict     True | False
-              | cannot_decide
-  confidence  0.0 – 1.0
-  reason      <span class="c">one sentence</span>
-  detail      <span class="c">{} — claim lists etc</span></pre>
-      </div>
       <div class="stack">
-        <h3>Why one shape matters</h3>
+        <h3>Screening, free and always on</h3>
         <p class="muted small">
-          Because the shape is common, all of this works for both field kinds with no
-          extra code: approval-rate screening, parse-failure tracking, panel voting and
-          dissent, relative leniency, the triage risk score, verdict caching.
+          A judge approving 94% of everything passes every format and parse check ever
+          written. The approval-rate table is the only thing that catches it, and it
+          needs no labels.
         </p>
         <p class="muted small">
-          Give free text its own verdict type and every one of those gets written twice.
+          Relative leniency is free too: when two judges disagree, note who approved.
+          188 to 14 in one direction tells you which one is the pushover.
         </p>
+      </div>
+      <div class="code">
+        <div class="h">per-judge health</div>
+<pre>judge     approves  unsure  unread.
+judge-a      71%      4%     0.3%
+judge-b      58%      2%     0.7%
+judge-c      94%      0%     0.0%  <span class="k">⚠</span></pre>
       </div>
     </div>
 
@@ -509,31 +829,33 @@
         <tbody>
           <tr>
             <td class="k">Routing disagreements to review</td>
-            <td class="muted">Judge disagreement does not rank errors. It ranks close to chance,
-            and on contested labels it actively selects the items nobody can resolve.</td>
+            <td class="muted">Judge disagreement does not rank errors — it lands close to
+            chance. On contested labels it actively selects the rows nobody can resolve.</td>
           </tr>
           <tr>
             <td class="k">Auto-approving on unanimity</td>
-            <td class="muted">Judges agree on the large majority of items and are wrong about a
+            <td class="muted">Judges agree on the large majority of rows and are wrong about a
             meaningful share of what they agree on. Consensus is not proof.</td>
           </tr>
           <tr>
             <td class="k">A single blended panel score</td>
             <td class="muted">Averaging a 2–1 split throws away the only interesting part. The
-            split and the dissenting reason are both reported.</td>
+            split and the dissenting reason are both written out.</td>
           </tr>
         </tbody>
       </table>
     </div>
   </section>
 
-  <section class="stack-lg">
+  <!-- 08 -->
+  <section id="guardrails" class="stack-lg">
     <div class="col stack">
-      <p class="eyebrow">Guardrails</p>
+      <p class="eyebrow"><span class="step">08</span> Guardrails</p>
       <h2>Checks on the measurement, not the data</h2>
       <p class="muted">
-        Each one catches a failure that otherwise produces a confident, plausible, wrong
-        number. They run first and cost nothing.
+        Each catches a failure that otherwise produces a confident, plausible, wrong
+        number. They run first and cost nothing. Every threshold is a default you can
+        change — except the last one.
       </p>
     </div>
 
@@ -542,46 +864,32 @@
         <thead><tr><th>Guardrail</th><th class="mono">default</th><th>Catches</th></tr></thead>
         <tbody>
           <tr>
-            <td class="k">Judge approval rate</td>
-            <td class="num">15–85%</td>
-            <td class="muted">A rubber-stamp judge. Approving 99% passes every format and
-            parse check ever written.</td>
+            <td class="k">Judge approval rate</td><td class="num">15–85%</td>
+            <td class="muted">A rubber-stamp judge. Approving 99% passes every other check ever written.</td>
           </tr>
           <tr>
-            <td class="k">Unreadable replies</td>
-            <td class="num">&lt; 2%</td>
-            <td class="muted">Counted, never defaulted. A fallback verdict is uncorrelated by
-            construction and silently shifts every agreement number.</td>
+            <td class="k">Unreadable replies</td><td class="num">&lt; 2%</td>
+            <td class="muted">Counted, never defaulted. A fallback verdict is uncorrelated by construction and silently shifts every agreement number.</td>
           </tr>
           <tr>
-            <td class="k">Which items failed</td>
-            <td class="num">reported</td>
-            <td class="muted">Empty replies cluster on long, hard items. Your worst cases going
-            unjudged.</td>
+            <td class="k">Which rows failed</td><td class="num">reported</td>
+            <td class="muted">Empty replies cluster on long, hard rows — your worst cases going unjudged.</td>
           </tr>
           <tr>
-            <td class="k">Minority class floor</td>
-            <td class="num">30 and 5%</td>
-            <td class="muted">An AUC that ranks three negatives looks fine and has a tight-looking
-            interval.</td>
+            <td class="k">Minority class floor</td><td class="num">30 and 5%</td>
+            <td class="muted">An AUC ranking three negatives looks fine and has a tight-looking interval.</td>
           </tr>
           <tr>
-            <td class="k">Sample floor for ranking</td>
-            <td class="num">n ≥ 200</td>
-            <td class="muted">Below it the interval spans useless to excellent. That's not a weak
-            result, it's no result.</td>
+            <td class="k">Sample floor for ranking</td><td class="num">n ≥ 200</td>
+            <td class="muted">Below it the interval spans useless to excellent. That is not a weak result, it is no result.</td>
           </tr>
           <tr>
-            <td class="k">Label-leak assertion</td>
-            <td class="num">always on</td>
-            <td class="muted">A triage signal that saw the answer. Scores beautifully, worth
-            nothing in production. The one setting you cannot turn off.</td>
+            <td class="k">Taxonomy hash</td><td class="num">always on</td>
+            <td class="muted">Someone tightening a definition without bumping the version, and a month of results quietly ceasing to be comparable.</td>
           </tr>
           <tr>
-            <td class="k">Taxonomy hash</td>
-            <td class="num">always on</td>
-            <td class="muted">Someone tightening a definition without bumping the version, and a
-            month of results quietly ceasing to be comparable.</td>
+            <td class="k">Label-leak assertion</td><td class="num">not tunable</td>
+            <td class="muted">A triage signal that saw the answer. The one setting you cannot turn off, because it is a bug check and not a threshold.</td>
           </tr>
         </tbody>
       </table>
@@ -591,171 +899,47 @@
       <h3>They suppress numbers, not the run</h3>
       <p class="muted small">
         A guardrail firing removes the specific figures it invalidates and prints why.
-        You still get everything else.
+        Everything else still lands.
       </p>
     </div>
 
     <div class="figure">
 <pre>  <span class="a">┌ WHAT THIS RUN CANNOT TELL YOU ───────────────────────┐</span>
   <span class="a">│</span>  ✗ triage AUC for `summary`                           <span class="a">│</span>
-  <span class="a">│</span>      12 items in the minority class, need 30          <span class="a">│</span>
+  <span class="a">│</span>      12 rows in the minority class, need 30           <span class="a">│</span>
   <span class="a">│</span>                                                       <span class="a">│</span>
   <span class="a">│</span>  ✗ judge-c's contribution to panel agreement          <span class="a">│</span>
-  <span class="a">│</span>      approved 97% of items — excluded                 <span class="a">│</span>
+  <span class="a">│</span>      approved 97% of rows — excluded                  <span class="a">│</span>
   <span class="a">│</span>                                                       <span class="a">│</span>
   <span class="a">│</span>  ✗ drift vs the previous run                          <span class="a">│</span>
   <span class="a">│</span>      taxonomy moved v4 → v5, no mapping supplied      <span class="a">│</span>
   <span class="a">└───────────────────────────────────────────────────────┘</span></pre>
-      <div class="cap">Fig 4 — every report carries this block, even when empty</div>
-    </div>
-  </section>
-
-  <section class="stack-lg">
-    <div class="col stack">
-      <p class="eyebrow">Gates</p>
-      <h2>Two questions before any quality number</h2>
+      <div class="cap">Fig 8 — every report carries this block, even when empty</div>
     </div>
 
     <div class="grid">
       <div>
         <p class="n">Gate 1</p>
         <h3>Can the measurement be trusted?</h3>
-        <p class="muted small">The guardrails above. If they fail, everything downstream is
-        decoration.</p>
+        <p class="muted small">The guardrails above. If they fail, everything downstream is decoration.</p>
       </div>
       <div>
         <p class="n">Gate 2</p>
         <h3>Is the judge better than guessing?</h3>
-        <p class="muted small">Scored against random, always-approve, majority-label and item
-        length — on the same target, printed side by side, always.</p>
+        <p class="muted small">Scored against random, always-approve, majority-label and item length — same target, printed side by side, always.</p>
       </div>
       <div>
         <p class="n">Then</p>
-        <h3>The operating point</h3>
-        <p class="muted small">Not an AUC. "Review 2,500 of 50,000 and you find 54% of the
-        errors" is the number a capacity plan can use.</p>
+        <h3>Quality numbers</h3>
+        <p class="muted small">Only once both gates pass does anything else get reported.</p>
       </div>
     </div>
   </section>
 
-  <section class="stack-lg">
+  <!-- 09 -->
+  <section id="build" class="stack-lg">
     <div class="col stack">
-      <p class="eyebrow">Modes</p>
-      <h2>Per field, recomputed every run</h2>
-      <p class="muted">
-        Most of the tool works with no human labels at all. It is explicit about which
-        parts don't, and how few you would need.
-      </p>
-    </div>
-
-    <div class="tw">
-      <table>
-        <thead><tr><th class="mono">mode</th><th>You have</th><th>You additionally get</th></tr></thead>
-        <tbody>
-          <tr>
-            <td class="k mono">0</td>
-            <td class="muted">nothing</td>
-            <td class="muted">distributions, drift, judge health, relative leniency,
-            cross-field consistency, triage ranking, fuzzy label pairs</td>
-          </tr>
-          <tr>
-            <td class="k mono">1</td>
-            <td class="muted">~100 labelled</td>
-            <td class="muted">accuracy, macro F1, confusion matrix, tree buckets,
-            judge direction, the operating-point table</td>
-          </tr>
-          <tr>
-            <td class="k mono">2</td>
-            <td class="muted">~100 double-labelled</td>
-            <td class="muted">whether your taxonomy is actually crisp — and everything
-            above becomes trustworthy</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="col">
-      <p class="muted small">
-        Mode is per field, so <code>jtbd</code> can be in Mode 1 while <code>summary</code>
-        sits in Mode 0. Both appear in the report banner with what they cannot support.
-      </p>
-    </div>
-  </section>
-
-  <section class="stack-lg">
-    <div class="col stack">
-      <p class="eyebrow">Execution</p>
-      <h2>Collect once, analyse for free</h2>
-    </div>
-
-    <div class="figure">
-<pre>   <b>COLLECT</b>  ──► verdicts.jsonl        <span class="d">costs money. run once.</span>
-                        │
-                        ▼
-   <b>ANALYSE</b>  ◄────────┘                <span class="g">free. run a hundred times.</span>
-
-   cache key = (judge, model, prompt hash, item, field, output value)</pre>
-      <div class="cap">Fig 5 — the only expensive operation is isolated behind a file</div>
-    </div>
-
-    <div class="col stack">
-      <p class="muted">
-        Change a threshold, add a check, fix a reporting bug, try a different target —
-        <code>analyse</code> re-runs against the cache and issues zero model calls. Cheap
-        reporting code that only ever runs after an expensive collection is its own
-        failure mode; this removes it.
-      </p>
-    </div>
-
-    <div class="code">
-      <div class="h">cli</div>
-<pre>llm-expectations run      run.yml        <span class="c"># collect + analyse</span>
-llm-expectations plan     run.yml        <span class="c"># cost estimate, no calls</span>
-llm-expectations analyse  out/&lt;run&gt;/     <span class="c"># re-analyse from cache, free</span>
-llm-expectations compare  out/a out/b    <span class="c"># two runs, head to head</span>
-llm-expectations check    taxonomy.yml   <span class="c"># static taxonomy health</span></pre>
-    </div>
-  </section>
-
-  <section class="stack-lg">
-    <div class="col stack">
-      <p class="eyebrow">Interface</p>
-      <h2>Five inputs, four outputs</h2>
-    </div>
-
-    <div class="split">
-      <div class="code">
-        <div class="h">in</div>
-<pre>items.jsonl      the units
-outputs.jsonl    what the model said
-taxonomy.yml     versioned label tree
-judges.yml       models, keys, panel wiring
-labels.jsonl     human answers <span class="c">(optional)</span></pre>
-      </div>
-      <div class="code">
-        <div class="h">out — one folder per run</div>
-<pre>run.json         settings, modes, gates
-verdicts.jsonl   every judge call
-findings.jsonl   every check result
-metrics.json     aggregates + intervals
-report.md        readable</pre>
-      </div>
-    </div>
-
-    <div class="col stack">
-      <p class="muted small">
-        Kept separate because they change on different schedules — re-run the model and
-        outputs change while items don't; add labels later and nothing else moves.
-        JSONL because it streams; CSV, parquet and dataframes go through swappable
-        readers. API keys are referenced by environment-variable <em>name</em>, so the
-        config file is safe to commit.
-      </p>
-    </div>
-  </section>
-
-  <section class="stack-lg">
-    <div class="col stack">
-      <p class="eyebrow">Build order</p>
+      <p class="eyebrow"><span class="step">09</span> Build order</p>
       <h2>Four weeks, three places to stop</h2>
     </div>
 
@@ -779,42 +963,36 @@ report.md        readable</pre>
     <div class="col stack">
       <p class="muted small">
         Judge health sits in M1, not M4. Approval rate and parse rate are about twenty
-        lines each, and without them the first shippable version could be ranking items
+        lines each, and without them the first shippable version could be ranking rows
         with a rubber-stamp judge. That guardrail cannot wait for a later milestone.
       </p>
     </div>
-  </section>
 
-  <section class="stack-lg">
-    <div class="col stack">
-      <p class="eyebrow">Scope</p>
-      <h2>Out of v0, on purpose</h2>
-    </div>
-
-    <div class="tw">
-      <table>
-        <thead><tr><th>Deferred</th><th>Why it can wait</th></tr></thead>
-        <tbody>
-          <tr><td class="k mono">copied fields</td><td class="muted">Well-trodden, and other tools cover it. The seam is ready.</td></tr>
-          <tr><td class="k">derived thresholds</td><td class="muted">Needs Mode 1 data. <code>threshold_from</code> is already on every finding.</td></tr>
-          <tr><td class="k">A/B with significance</td><td class="muted">Needs two real runs first. Most items tie; a win rate without a test is a coin flip.</td></tr>
-          <tr><td class="k">multi-label</td><td class="muted">Every metric changes. The value becoming a list is the easy half.</td></tr>
-          <tr><td class="k">reasoning judges</td><td class="muted">Cost. And empty replies from a blown token budget land on the hard items.</td></tr>
-          <tr><td class="k">cache at scale</td><td class="muted">JSONL holds to a few hundred thousand rows; SQLite is a swap behind one interface.</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="tw">
-      <table>
-        <thead><tr><th>Never</th><th>Why</th></tr></thead>
-        <tbody>
-          <tr><td class="k">Generating the labels</td><td class="muted">This checks work; it does not produce it.</td></tr>
-          <tr><td class="k">Prompt management</td><td class="muted">Separate concern, mature tools exist.</td></tr>
-          <tr><td class="k">A dashboard</td><td class="muted">Files feed whatever you already run.</td></tr>
-          <tr><td class="k">Streaming</td><td class="muted">Batch by design. Wrap it if you need to.</td></tr>
-        </tbody>
-      </table>
+    <div class="split">
+      <div class="tw">
+        <table>
+          <thead><tr><th>Deferred to v1</th></tr></thead>
+          <tbody>
+            <tr><td class="muted"><strong>copied fields</strong> — the seam is ready</td></tr>
+            <tr><td class="muted"><strong>derived thresholds</strong> — needs mode 1 data</td></tr>
+            <tr><td class="muted"><strong>A/B with significance</strong> — needs two real runs</td></tr>
+            <tr><td class="muted"><strong>multi-label</strong> — every metric changes</td></tr>
+            <tr><td class="muted"><strong>warehouse source and sink</strong></td></tr>
+            <tr><td class="muted"><strong>cache in SQLite</strong> — a swap behind one interface</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Never</th></tr></thead>
+          <tbody>
+            <tr><td class="muted"><strong>Generating the labels</strong> — this checks work, it does not produce it</td></tr>
+            <tr><td class="muted"><strong>Prompt management</strong> — separate concern, mature tools exist</td></tr>
+            <tr><td class="muted"><strong>A dashboard</strong> — files feed whatever you already run</td></tr>
+            <tr><td class="muted"><strong>Streaming</strong> — batch by design; wrap it if you need to</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -825,11 +1003,10 @@ report.md        readable</pre>
     </p>
     <p class="small muted">
       This is the overview. Every threshold, its default, and what it defends against is
-      in <code>DESIGN.md</code>. The non-technical version is <code>docs/pitch.html</code>.
+      in <code>DESIGN.md</code>. The non-technical version is <a href="pitch.html">pitch.html</a>.
     </p>
   </footer>
 
 </div>
-
 </body>
 </html>
