@@ -19,12 +19,13 @@
 4. [The shared engine](#4-the-shared-engine)
 5. [Assigned fields](#5-assigned-fields)
 6. [Judges](#6-judges)
-7. [Free text fields](#7-free-text-fields)
-8. [Taxonomy](#8-taxonomy)
-9. [Guardrails](#9-guardrails)
-10. [Config and report](#10-config-and-report)
-11. [Repo layout and build order](#11-repo-layout-and-build-order)
-12. [v1 — what we are not building yet](#12-v1--what-we-are-not-building-yet)
+7. [Calibration, risk and triage](#7-calibration-risk-and-triage)
+8. [Free text fields](#8-free-text-fields)
+9. [Taxonomy](#9-taxonomy)
+10. [Guardrails](#10-guardrails)
+11. [Config and report](#11-config-and-report)
+12. [Repo layout and build order](#12-repo-layout-and-build-order)
+13. [v1 — what we are not building yet](#13-v1--what-we-are-not-building-yet)
 
 ---
 
@@ -151,7 +152,7 @@ Every judge is compared to the dumb options on the same target.
 | Drift vs last run | warn on **> 10pp** move | something changed silently |
 | Disagreement by label pair | top 5 reported | one pair carrying most disagreement = taxonomy bug |
 | Stability on rerun | warn **< 90%** | the model flips its own answers |
-| Triage risk score | the ranking output | this is the deliverable |
+| Triage ranking | the ordering output | **stamped uncalibrated in mode 0** — a ranking, not a validated one |
 
 **Mode 1 — with human labels**
 
@@ -164,7 +165,10 @@ Every judge is compared to the dumb options on the same target.
 | Confusion matrix | the actionable output |
 | Judge accuracy | must beat majority-label |
 | Judge direction | approves-wrong % vs rejects-right % |
-| Operating point | the number that decides if this is worth running |
+| **Error Recall@Budget** | **the primary metric** — errors found in the top K reviewed |
+| Precision@Budget | of what you reviewed, how much was genuinely wrong |
+| Strategy comparison | every ranker against every baseline, same budgets |
+| Calibration quality | ECE, Brier, reliability — did the fit help? |
 | Confidence calibration | does 0.9 mean 90%? |
 
 **The operating point is the deliverable, not the AUC:**
@@ -204,9 +208,9 @@ Every judge is compared to the dumb options on the same target.
 
 ### The one-line answer to "can we use this?"
 
-> **Yes, if a single judge's risk score beats random, always-approve,
-> majority-label and item-length on the same target, at n ≥ 200, with an
-> interval that clears the best baseline.**
+> **Yes, if a judge-based ranking beats random, majority-label, output-length
+> and panel-disagreement on Error Recall@Budget at your actual review budget,
+> at n ≥ 200, with an interval that clears the best baseline.**
 
 If it does not, the honest answer is *"a judge is not buying you anything here"*
 — and saying that is worth more than a dashboard.
@@ -490,6 +494,9 @@ without loading them. Readers are swappable. Warehouse connectors are v1.
        ├── verdicts.jsonl   every judge call — cached and reusable
        ├── findings.jsonl   every check result, one row each
        ├── metrics.json     the aggregate numbers with intervals
+       ├── risk.jsonl       one row per item — triage score and its provenance
+       ├── triage_eval.json strategy x budget comparison        (mode 1)
+       ├── calibration.json the fitted calibrator and FitReport (mode 1)
        └── report.md        human readable
      index.jsonl
 ```
@@ -626,14 +633,19 @@ Both kinds return the same thing from a judge:
 
 ```python
 Verdict:
-    judge        "judge-b"
-    item_id      "s-1042"
-    field        "summary"
-    verdict      True | False | cannot_decide
-    confidence   0.7
-    reason       "claims a refund that never happened"
-    detail       {...}     # free text puts its claim list here
+    judge_id        "judge-b"
+    check_id        "label_correct"
+    item_id         "s-1042"
+    field           "summary"
+    status          PASS | FAIL | UNSCORED
+    raw_confidence  0.7      # what the judge said. not a probability.
+    reason          "claims a refund that never happened"
+    detail          {...}    # free text puts its claim list here
+    metadata        {...}    # model, prompt hash, tokens, latency, cache_hit
 ```
+
+Note what is **absent**: no error probability and no triage score. Those are
+computed downstream, from a verdict plus a fitted calibrator — see section 7.
 
 Because the shape is common, all of this works for both kinds with no extra
 code:
@@ -973,23 +985,18 @@ it. It carries a warning rather than being withheld.
    ⚠ you are paying for three opinions and receiving about one.
 ```
 
-### The triage judge: a risk score
+### The triage judge produces verdicts, not a ranking
 
-With two or three fields per item, "share of fields flagged" is too coarse to
-rank with. The risk score uses confidence too:
+A judge emits a status and a raw confidence. Turning those into an order to
+review in is a **separate step with its own machinery**, because the obvious
+shortcut — rank by `1 − confidence` and call it risk — quietly asserts that a
+number the model emitted is a probability of error. It is not, and that
+assertion is the failure this library exists to catch.
 
-```
-   risk = 1 − (mean judge confidence across the item's fields)
+Ranking, calibration and how the two are evaluated are section 7.
 
-   item      jtbd conf   summary conf   risk
-   s-2201      0.31         0.22        0.74     ← open this first
-   s-1042      0.90         0.55        0.28
-   s-0876      0.95         0.91        0.07     ← leave it
-```
-
-Works with 1 field or 15, gives a continuous ranking, and uses both the verdict
-and how sure the judge was. Sort descending, review down the list until the
-budget runs out.
+What the judge owes the ranker is only this: a status, a raw confidence, a
+reason, and honest metadata about how the call went.
 
 ### Judge screening — free, and the most important check
 
@@ -1047,7 +1054,220 @@ eats the token budget. Those empties land on the hard items.
 
 ---
 
-## 7. Free text fields
+## 7. Calibration, risk and triage
+
+### Three numbers, never silently interconverted
+
+The mistake this section exists to prevent is treating a number a language
+model emitted as a probability. It is not one. A judge reporting "confidence
+0.9" is stating a feeling; ranking on it and calling the result a risk score is
+exactly the trust-laundering this library is built to catch.
+
+So three separately named things:
+
+| Name | What it is |
+|---|---|
+| `raw_confidence` | What the judge said. A number in [0,1]. **Not a probability of anything.** |
+| `calibrated_error_probability` | P(this verdict is wrong), from a calibrator fitted on human-labelled data. Exists only in mode 1+. |
+| `triage_score` | The ranking signal. Derived from one of the above, and always stamped with which. |
+
+```
+   judge  ──►  raw_confidence  ──┐
+                                 ├──►  calibrator  ──►  calibrated_error_probability
+   labelled sample ──────────────┘                              │
+                                                                ▼
+                                                          triage_score
+                                                  stamped calibrated / uncalibrated
+```
+
+### The Verdict model
+
+```python
+Verdict:
+    judge_id        "judge-b"
+    check_id        "label_correct"
+    item_id         "s-1042"
+    field           "summary"
+    status          PASS | FAIL | UNSCORED
+    raw_confidence  0.7        # what the judge said. not a probability.
+    reason          "claims a refund that never happened"
+    detail          {...}      # claim lists, per-field breakdowns
+    metadata        {...}      # model, prompt hash, tokens, latency, cache_hit
+```
+
+`calibrated_error_probability` is deliberately **not** on the Verdict. A judge
+does not produce it; a calibrator computes it later from a verdict plus a fitted
+model. Putting the field here would invite writing it at judge time, which is
+the bug this whole section exists to prevent.
+
+It lives on a derived row instead:
+
+```python
+RiskRow:
+    item_id
+    triage_score                    # 0–1, higher = review sooner
+    calibrated_error_probability    # float | None
+    raw_confidence_mean             # float
+    strategy                        # "calibrated_risk" | "raw_confidence" | ...
+    calibrated                      # bool
+    calibration_id                  # str | None
+```
+
+### The calibration interface
+
+```python
+class Calibrator(Protocol):
+    id: str
+    is_calibrated: bool
+
+    def fit(self, verdicts: list[Verdict], labels: list[Label]) -> FitReport: ...
+    def error_probability(self, verdict: Verdict) -> float: ...
+```
+
+Two ship in v0:
+
+| Calibrator | `is_calibrated` | What it does |
+|---|---|---|
+| `identity` | **False** | Returns `1 − raw_confidence`. The default with no labels. Everything it touches is stamped uncalibrated. |
+| `platt` | True | Logistic regression of the human verdict on raw confidence. Needs ≥ 100 labelled rows. |
+
+Isotonic regression is the obvious third and is deferred: it needs more data
+than most teams have at the start and overfits badly below a few hundred labels.
+
+**The identity calibrator is not a calibration.** It exists so the pipeline has
+one shape in both modes, and it says so on every number it produces:
+
+```
+   ⚠ triage ranking is UNCALIBRATED
+       ranked by raw judge confidence, which is not a probability of error
+       ~100 labelled rows would let it be fitted and measured
+```
+
+### Whether the calibration worked
+
+Fitting one is not the same as it helping. `FitReport` carries:
+
+| Metric | Reads as broken when |
+|---|---|
+| Expected calibration error | above ~0.10 — stated probabilities do not match observed rates |
+| Brier score | no better than the base rate — the calibration adds nothing |
+| Reliability curve | bins deviate from the diagonal in one direction |
+| n, and n per bin | below the floor; no bin under 20 rows gets its own number |
+
+### Calibrations go stale
+
+Fingerprinted on `(judge_id, model, prompt hash, check_id, taxonomy version)` —
+the same guard as the taxonomy hash.
+
+```
+   ERROR  calibration `jtbd_v4_judge-a` was fitted on prompt p7.
+          This run uses p8. Refit, or run uncalibrated and say so.
+```
+
+### Triage strategies are a plug point
+
+Ranking is not a hardcoded formula:
+
+```python
+class TriageStrategy(Protocol):
+    id: str
+    requires: frozenset[str]        # verdicts | labels | panel | outputs
+    def rank(self, ctx: TriageContext) -> dict[str, float]: ...
+```
+
+Six ship in v0, and four of them exist to be beaten:
+
+| Strategy | Needs | Role |
+|---|---|---|
+| `random` | — | baseline, seeded |
+| `output_length` | outputs | baseline — catches a target confounded with length |
+| `majority_label` | outputs | baseline — the trivial classifier |
+| `panel_disagreement` | panel | **a candidate, and a baseline** |
+| `raw_confidence` | verdicts | default when uncalibrated |
+| `calibrated_risk` | verdicts + calibration | default when calibrated |
+
+### Disagreement is a hypothesis, not a conclusion
+
+Published results — on invoice extraction, and on contested label spaces — find
+panel disagreement ranks errors close to chance and below any single judge. That
+is why it is not the default.
+
+But those are other corpora. Asserting the finding holds for yours without
+measuring it would be the same unearned confidence this library exists to
+prevent. So `panel_disagreement` ships as a **selectable strategy and a scored
+baseline**, and the comparison table settles it on your data.
+
+If it wins on your corpus, use it. The framework does not hold an opinion it
+will not let you check.
+
+### Error Recall@Budget is the primary metric
+
+> **Error Recall@K** = true errors found in the top K reviewed rows ÷ all true errors
+
+That is the question a review budget actually poses. AUC and the other aggregate
+ranking measures stay, and stay secondary.
+
+```yaml
+triage:
+  strategy: auto                 # calibrated_risk if fitted, else raw_confidence
+  budgets: [0.005, 0.01, 0.02, 0.05, 0.10, 0.20]
+```
+
+Per strategy, per budget:
+
+```
+   review_budget
+   n_reviewed
+   errors_found
+   error_recall          errors_found / total_true_errors
+   precision_at_budget   errors_found / n_reviewed
+   ci_low, ci_high       bootstrap over items, when n allows
+```
+
+**This needs labels.** You cannot count true errors without them, so
+recall@budget is a **mode 1** capability. In mode 0 you still get the ranking —
+you just do not get to claim it has been validated, and the report says exactly
+that rather than implying otherwise.
+
+### The comparison table
+
+```
+   strategy               budget   reviewed   found   recall   precision
+   calibrated_risk          1%        500       92    18.4%      18.4%
+   raw_confidence           1%        500       71    14.2%      14.2%
+   panel_disagreement       1%        500       34     6.8%       6.8%
+   output_length            1%        500       12     2.4%       2.4%
+   random                   1%        500       10     2.0%       2.0%
+```
+
+`llm-expectations triage-eval out/<run>/` produces it, reading verdicts and
+labels off disk and issuing zero model calls.
+
+### The two loops
+
+Calibration is where they meet, and they must not blur into one:
+
+```
+   EVALUATOR VALIDATION LOOP            rare · offline · labels eventually
+   ─────────────────────────
+   sample ─► panel ─► verdicts ─► agreement, judge health
+                               └─► calibration fit ─► FitReport
+                                            │
+                                            │  a fitted calibrator, as data
+                                            ▼
+   PRODUCTION QUALITY LOOP              every run · no labels required
+   ───────────────────────
+   outputs ─► judge ─► raw_confidence ─► calibrated_error_probability
+                                      ─► triage_score ─► human review
+```
+
+Labels enter the first loop and reach a judge in neither. Downstream of the
+judge they are used for exactly four things: fitting a calibration, validating
+it, computing metrics, and evaluating triage.
+
+---
+
+## 8. Free text fields
 
 ### Why it is different
 
@@ -1238,7 +1458,7 @@ If 15% of summaries get flagged and you audit 5% of the rest, you pay for about
 
 ---
 
-## 8. Taxonomy
+## 9. Taxonomy
 
 ### One file, four readers
 
@@ -1356,7 +1576,7 @@ Run before you spend anything, no data required:
 
 ---
 
-## 9. Guardrails
+## 10. Guardrails
 
 Checks on the **measurement**, not on your data. They run first, cost nothing,
 and are always on.
@@ -1502,7 +1722,7 @@ it is a bug check.
 
 ---
 
-## 10. Config and report
+## 11. Config and report
 
 ### The files
 
@@ -1665,7 +1885,7 @@ baseline is not a result.
 
 ---
 
-## 11. Repo layout and build order
+## 12. Repo layout and build order
 
 ### Layout
 
@@ -1695,8 +1915,19 @@ llm-expectations/
       providers.py    anthropic, openai, openai-compatible
       prompts.py      prompt builders per task
       panel.py        voting, dissent, agreement, effective votes
-      triage.py       risk score, ranking
       screening.py    approval rate, leniency, health table
+
+    calibration/
+      base.py         Calibrator protocol, FitReport, fingerprinting
+      identity.py     uncalibrated passthrough — stamps everything
+      platt.py        logistic fit on labelled verdicts
+      quality.py      ECE, Brier, reliability curve
+
+    triage/
+      base.py         TriageStrategy protocol, TriageContext, RiskRow
+      strategies.py   random, length, majority, disagreement,
+                      raw_confidence, calibrated_risk
+      evaluate.py     Error Recall@Budget, precision@budget, comparison
 
     checks/
       base.py         Check protocol, three grains
@@ -1708,7 +1939,7 @@ llm-expectations/
 
     metrics/
       classification.py   F1, confusion matrix, tree buckets
-      ranking.py          AUC, operating point
+      ranking.py          AUC and the other secondary aggregates
       agreement.py        agreement, effective votes, leniency
       stats.py            bootstrap, intervals, baselines
 
@@ -1756,8 +1987,12 @@ That is what makes `analyse` free.
        ~2 days
 
    M5  labels (Mode 1)
-       F1, confusion matrix, tree buckets, operating point,
-       judge direction, calibration
+       F1, confusion matrix, tree buckets, judge direction
+       ~3 days
+
+   M5b calibration + triage evaluation          <-- SHIPPABLE
+       Platt fit, FitReport quality metrics, staleness fingerprint,
+       Error Recall@Budget, the strategy comparison table
        ~3 days
 
    M6  free text                                ◄── SHIPPABLE
@@ -1833,7 +2068,7 @@ Each pins a mistake that is easy to make and hard to see:
 
 ---
 
-## 12. v1 — what we are not building yet
+## 13. v1 — what we are not building yet
 
 Each has a reason to wait and a seam already in place, so none requires a
 rewrite.
@@ -1852,7 +2087,7 @@ COPIED = FieldKind(
 ```
 
 The engine, gates, cache, panel and report do not change. This is the test of
-whether the seam in Section 4 is in the right place.
+whether the seam in section 4 is in the right place.
 
 **Why later:** the work here is assigned and free text. Copied is the
 well-trodden case and other tools cover it.
@@ -1925,3 +2160,6 @@ product.
 | Prompt management | Separate concern, mature tools exist |
 | A dashboard | Files feed whatever you already use |
 | Streaming / per-item | Batch by design; wrap it if you need to |
+| Pydantic runtime decorators | A decorator validating one call inline is a **guardrail library** — a different product sharing almost no machinery with a batch quality job. Doing both is how you do both badly. |
+| DataFrame accessor methods | Dataframes are already accepted as input. A `.llm_expectations` accessor is sugar over a function call. |
+| A fluent assertion DSL | Chained matchers are per-item assertions; this is a batch job whose output is a ranked corpus and a metrics table. Forcing one shape into the other makes both worse, and it would stand up a second config surface beside YAML. The matcher **names** were worth borrowing — check ids are now short verb phrases, since `expect_` is noise in a library called expectations. The chaining was not. |
