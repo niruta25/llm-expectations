@@ -407,7 +407,9 @@
         <p class="n">Ranks</p>
         <h3>Which ones to open first</h3>
         <p class="muted small">Instead of "79% accurate", you get an ordered list and a
-        straight answer: read the top 500 and you will find just over half the mistakes.</p>
+        straight answer: read the top 500 and you will find just over half the mistakes.
+        And it tells you whether that promise has been checked against real answers yet,
+        or is still just the AI's own hunch.</p>
       </div>
       <div>
         <p class="n">Screens</p>
@@ -485,6 +487,10 @@
   <span class="a">│</span>  ✗ whether the grader agrees with people on summaries <span class="a">│</span>
   <span class="a">│</span>      no human ratings yet.                            <span class="a">│</span>
   <span class="a">│</span>      about 100 rated summaries would unlock it.       <span class="a">│</span>
+  <span class="a">│</span>                                                       <span class="a">│</span>
+  <span class="a">│</span>  ⚠ the review order is <b>UNCHECKED</b>                       <span class="a">│</span>
+  <span class="a">│</span>      it uses the AI's own sense of how sure it is,     <span class="a">│</span>
+  <span class="a">│</span>      which nobody has yet shown to be trustworthy.     <span class="a">│</span>
   <span class="a">└──────────────────────────────────────────────────────┘</span>
 
   <b>categories</b>
@@ -544,6 +550,12 @@
             <td class="muted">"The model keeps getting these two wrong."</td>
             <td class="k">Those two categories overlap. The model isn't the problem;
             the definitions are.</td>
+          </tr>
+          <tr>
+            <td class="muted">"The AI is 90% sure, so it's probably right."</td>
+            <td class="k">An AI saying "90% sure" is a feeling, not a measurement.
+            Until it's checked against real answers, this tool labels it a hunch
+            rather than quietly treating it as a probability.</td>
           </tr>
           <tr>
             <td class="muted">"Everything's green."</td>

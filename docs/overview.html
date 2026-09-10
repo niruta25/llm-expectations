@@ -354,6 +354,8 @@
   .plot .ln { stroke: var(--c-series); stroke-width: 2; fill: none; stroke-linejoin: round; }
   .plot .ar { fill: var(--c-series); opacity: 0.10; }
   .plot .pt { fill: var(--c-series); stroke: var(--panel); stroke-width: 2; }
+  .plot .ln.alt { stroke: var(--c-unscored); stroke-dasharray: 6 3; }
+  .plot .pt.alt { fill: var(--c-unscored); }
   .plot .pt:hover { r: 7; }
   .plot .lbl { fill: var(--ink); font-family: var(--mono); font-size: 9.5px; font-weight: 500; }
 
@@ -395,8 +397,9 @@
       <a href="#consume"><span class="s">05</span><span class="l">Consuming it</span></a>
       <a href="#pipeline"><span class="s">06</span><span class="l">Pipeline</span></a>
       <a href="#judges"><span class="s">07</span><span class="l">Judges</span></a>
-      <a href="#guardrails"><span class="s">08</span><span class="l">Guardrails</span></a>
-      <a href="#build"><span class="s">09</span><span class="l">Build order</span></a>
+      <a href="#risk"><span class="s">08</span><span class="l">Calibration &amp; triage</span></a>
+      <a href="#guardrails"><span class="s">09</span><span class="l">Guardrails</span></a>
+      <a href="#build"><span class="s">10</span><span class="l">Build order</span></a>
     </nav>
   </section>
 
@@ -566,14 +569,16 @@
             <td class="muted">nothing</td>
             <td class="muted">label validity · distribution and collapse · drift vs last run ·
             abstention rate · judge approval rates · relative leniency · cross-field
-            consistency · fuzzy label pairs · <strong>triage ranking</strong></td>
+            consistency · fuzzy label pairs · <strong>a triage ranking, stamped
+            uncalibrated</strong></td>
           </tr>
           <tr>
             <td class="k mono">1</td>
             <td class="muted">~100 labelled</td>
             <td class="muted">+ accuracy · macro F1 · per-label precision and recall ·
-            confusion matrix · tree buckets · judge direction · confidence calibration ·
-            <strong>the operating-point table</strong></td>
+            confusion matrix · tree buckets · judge direction · a fitted calibrator
+            and its quality · <strong>Error Recall@Budget and the strategy
+            comparison</strong></td>
           </tr>
           <tr>
             <td class="k mono">2</td>
@@ -586,9 +591,13 @@
     </div>
 
     <div class="col stack">
-      <h3>The headline is an operating point, not an AUC</h3>
+      <h3>Error Recall@Budget is the headline, not AUC</h3>
       <p class="muted small">
-        "AUC 0.84" cannot go into a capacity plan. This can:
+        <strong>Error Recall@K</strong> = true errors found in the top K reviewed rows,
+        divided by all true errors. That is the question a review budget actually poses.
+        AUC and the other aggregates stay, and stay secondary. Counting true errors needs
+        labels, so this is a mode 1 capability — in mode 0 you get the ranking, and the
+        report says plainly that it has not been validated.
       </p>
     </div>
 
@@ -599,18 +608,19 @@
         <div class="tile"><span class="lab">judge calls</span><span class="val">2,332</span><span class="sub">1,204 triage + 900 panel + 228 claims</span></div>
         <div class="tile"><span class="lab">spend</span><span class="val">$0.34</span><span class="sub">$0.00028 per row</span></div>
         <div class="tile"><span class="lab">gates</span><span class="val ok">PASS</span><span class="sub">measurement &middot; judge vs baselines</span></div>
+        <div class="tile"><span class="lab">triage</span><span class="val" style="color:var(--c-unscored);font-size:1.05rem">UNCALIBRATED</span><span class="sub">ranked by raw confidence &mdash; ~100 labels would fit it</span></div>
       </div>
 
       <div class="charts">
 
         <div class="chart wide">
           <div class="ttl">
-            <b>Review budget against errors found</b>
-            <span>Sort by risk score, review down the list. The dashed line is what random sampling would give you.</span>
+            <b>Which ranking finds errors fastest?</b>
+            <span>Error Recall@Budget for each strategy on the same corpus. The framework measures this rather than assuming it — if disagreement wins on your data, use it.</span>
           </div>
           <div class="plotwrap">
           <svg class="plot" viewBox="0 0 560 220" role="img"
-               aria-label="Cumulative errors found as review budget increases. At a 1% budget 18% of errors are found, at 5% 54%, at 10% 71%. Random sampling would find a share equal to the budget.">
+               aria-label="Error recall against review budget for three strategies. Calibrated risk finds 18% of errors at a 1% budget, 54% at 5%, 71% at 10%. Panel disagreement finds 4%, 14% and 24% at the same budgets. Random sampling finds a share equal to the budget.">
             <g class="gr">
               <line x1="44" y1="190" x2="544" y2="190"></line>
               <line x1="44" y1="145.5" x2="544" y2="145.5"></line>
@@ -635,6 +645,9 @@
             </g>
 
             <path class="ref" d="M44,190 L544,12"></path>
+            <path class="ln alt" d="M44,190 L49,182.88 L69,165.08 L94,147.28 L144,117.02 L294,61.84 L544,12"></path>
+            <circle class="pt alt" cx="69" cy="165.08" r="5"><title>panel disagreement — 5% budget &rarr; 14% of errors found</title></circle>
+            <circle class="pt alt" cx="94" cy="147.28" r="5"><title>panel disagreement — 10% budget &rarr; 24% of errors found</title></circle>
             <path class="ar" d="M44,190 L49,157.96 L69,93.88 L94,63.62 L144,36.92 L294,17.34 L544,12 L544,190 Z"></path>
             <path class="ln" d="M44,190 L49,157.96 L69,93.88 L94,63.62 L144,36.92 L294,17.34 L544,12"></path>
 
@@ -644,21 +657,25 @@
             <circle class="pt" cx="144" cy="36.92"  r="5"><title>20% budget &rarr; 86% of errors found</title></circle>
             <circle class="pt" cx="294" cy="17.34"  r="5"><title>50% budget &rarr; 97% of errors found</title></circle>
 
-            <text class="lbl" x="78" y="88">54% at a 5% budget</text>
-            <text class="lbl" x="330" y="46" fill="currentColor" opacity="0.6">random sampling</text>
+            <text class="lbl" x="78" y="86">calibrated risk</text>
+            <text class="lbl" x="104" y="143">panel disagreement</text>
+            <text class="lbl" x="345" y="44" fill="currentColor" opacity="0.6">random</text>
           </svg>
           </div>
           <div class="lgd">
-            <i class="s-ser">risk-score ranking</i>
+            <i class="s-ser">calibrated risk</i>
+            <i class="s-unsc">panel disagreement</i>
             <i style="color:var(--ink-3)">random baseline</i>
           </div>
           <div class="tw">
             <table class="mini">
-              <thead><tr><th>budget</th><th>rows</th><th>errors found</th><th>wasted review</th></tr></thead>
+              <thead><tr><th>strategy</th><th>budget</th><th>reviewed</th><th>found</th><th>error recall</th><th>precision</th></tr></thead>
               <tbody>
-                <tr><td class="num">1%</td><td class="num">500</td><td class="num">18%</td><td class="num">2%</td></tr>
-                <tr><td class="num">5%</td><td class="num">2,500</td><td class="num">54%</td><td class="num">11%</td></tr>
-                <tr><td class="num">10%</td><td class="num">5,000</td><td class="num">71%</td><td class="num">29%</td></tr>
+                <tr><td class="k">calibrated_risk</td><td class="num">1%</td><td class="num">500</td><td class="num">92</td><td class="num">18.4%</td><td class="num">18.4%</td></tr>
+                <tr><td class="k">raw_confidence</td><td class="num">1%</td><td class="num">500</td><td class="num">71</td><td class="num">14.2%</td><td class="num">14.2%</td></tr>
+                <tr><td class="k">panel_disagreement</td><td class="num">1%</td><td class="num">500</td><td class="num">34</td><td class="num">6.8%</td><td class="num">6.8%</td></tr>
+                <tr><td class="k">output_length</td><td class="num">1%</td><td class="num">500</td><td class="num">12</td><td class="num">2.4%</td><td class="num">2.4%</td></tr>
+                <tr><td class="k">random</td><td class="num">1%</td><td class="num">500</td><td class="num">10</td><td class="num">2.0%</td><td class="num">2.0%</td></tr>
               </tbody>
             </table>
           </div>
@@ -780,6 +797,9 @@
       <b>findings.jsonl</b> one row per (item, field, check)
       <b>verdicts.jsonl</b> one row per judge call — also the cache
       <b>metrics.json</b>   aggregates with confidence intervals
+      <b>risk.jsonl</b>     one row per item — triage score and its provenance
+      <b>triage_eval.json</b>  strategy x budget comparison    <span class="d">(mode 1)</span>
+      <b>calibration.json</b> the fitted calibrator + fit report <span class="d">(mode 1)</span>
       report.md      human readable</pre>
       <div class="cap">Fig 3 — timestamped folders; several runs a day never collide</div>
     </div>
@@ -813,8 +833,9 @@
         <tbody>
           <tr><td class="k mono">run_id, judge, model</td><td class="type">string</td><td class="muted">one row per judge, never averaged at write time</td></tr>
           <tr><td class="k mono">item_id, field</td><td class="type">string</td><td class="muted"></td></tr>
-          <tr><td class="k mono">verdict</td><td class="type">enum</td><td class="muted">true · false · cannot_decide</td></tr>
-          <tr><td class="k mono">confidence</td><td class="type">float</td><td class="muted">feeds the triage risk score</td></tr>
+          <tr><td class="k mono">status</td><td class="type">enum</td><td class="muted">pass · fail · unscored</td></tr>
+          <tr><td class="k mono">raw_confidence</td><td class="type">float</td><td class="muted"><strong>what the judge said. not a probability of anything.</strong></td></tr>
+          <tr><td class="k mono">check_id</td><td class="type">string</td><td class="muted">which question was asked</td></tr>
           <tr><td class="k mono">reason</td><td class="type">string</td><td class="muted">one sentence — what a reviewer reads</td></tr>
           <tr><td class="k mono">detail</td><td class="type">json</td><td class="muted">claim lists, for free text</td></tr>
           <tr><td class="k mono">tokens_in, tokens_out</td><td class="type">int</td><td class="muted"></td></tr>
@@ -910,6 +931,8 @@ llm-expectations run      run.yml
 llm-expectations analyse  out/&lt;run&gt;/
 <span class="c"># re-analyse from cache, free</span>
 
+llm-expectations calibrate   out/&lt;run&gt;/
+llm-expectations triage-eval out/&lt;run&gt;/
 llm-expectations compare  out/a out/b
 llm-expectations check    taxonomy.yml</pre>
       </div>
@@ -1043,8 +1066,9 @@ llm-expectations check    taxonomy.yml</pre>
            └─ side-by-side health check of the judges
 
   <b>TRIAGE</b>   1 judge × every row            <span class="d">50,000 calls</span>
-           └─ risk = 1 − mean confidence across the row's fields
-              sort desc, review until the budget runs out</pre>
+           └─ emits a status and a raw confidence per row.
+              turning those into an order to review in is a
+              <span class="a">separate step</span> — see 08.</pre>
       <div class="cap">Fig 7 — scope and cost, for a 50,000-row corpus</div>
     </div>
 
@@ -1094,10 +1118,158 @@ judge-c      94%      0%     0.0%  <span class="k">⚠</span></pre>
     </div>
   </section>
 
+
   <!-- 08 -->
+  <section id="risk" class="stack-lg">
+    <div class="col stack">
+      <p class="eyebrow"><span class="step">08</span> Calibration &amp; triage</p>
+      <h2>A confidence is not a probability</h2>
+      <p class="muted">
+        The obvious shortcut is to rank by <code>1 &minus; confidence</code> and call the
+        result a risk score. That quietly asserts a number the model emitted is a
+        probability of error. It is not — and that assertion is precisely the failure
+        this library exists to catch. So three separately named things, never silently
+        interconverted.
+      </p>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Name</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td class="k mono">raw_confidence</td><td class="muted">What the judge said. A number in [0,1]. <strong>Not a probability of anything.</strong></td></tr>
+          <tr><td class="k mono">calibrated_error_probability</td><td class="muted">P(this verdict is wrong), from a calibrator fitted on human-labelled data. Mode 1+ only.</td></tr>
+          <tr><td class="k mono">triage_score</td><td class="muted">The ranking signal. Derived from one of the above, always stamped with which.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="figure">
+<pre>   judge  ──►  raw_confidence  ──┐
+                                 ├──► calibrator ──► calibrated_error_probability
+   labelled sample ──────────────┘                            │
+                                                              ▼
+                                                        triage_score
+                                                <span class="a">stamped calibrated / uncalibrated</span></pre>
+      <div class="cap">Fig 8 — the conversion is explicit, fitted, and auditable</div>
+    </div>
+
+    <div class="split">
+      <div class="code">
+        <div class="h">the calibration seam</div>
+<pre><span class="k">class</span> Calibrator(Protocol):
+    id: str
+    is_calibrated: bool
+
+    <span class="k">def</span> fit(verdicts, labels) -> FitReport
+    <span class="k">def</span> error_probability(verdict) -> float</pre>
+      </div>
+      <div class="stack">
+        <h3>Two ship in v0</h3>
+        <p class="muted small">
+          <code>identity</code> returns <code>1 &minus; raw_confidence</code> and reports
+          <code>is_calibrated = False</code>. It is <em>not</em> a calibration — it
+          exists so the pipeline has one shape in both modes, and it announces itself
+          on every number it touches.
+        </p>
+        <p class="muted small">
+          <code>platt</code> is a logistic fit of the human verdict on raw confidence,
+          gated at 100 labelled rows. Isotonic is the obvious third and is deferred —
+          it overfits badly below a few hundred labels.
+        </p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <p class="h">what mode 0 prints on the ranking</p>
+      <p class="small" style="font-family:var(--mono);font-size:0.78rem;white-space:pre-wrap">⚠ triage ranking is UNCALIBRATED
+    ranked by raw judge confidence, which is not a probability of error
+    ~100 labelled rows would let it be fitted and measured</p>
+    </div>
+
+    <div class="col stack">
+      <h3>Fitting one is not the same as it working</h3>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Fit metric</th><th>Reads as broken when</th></tr></thead>
+        <tbody>
+          <tr><td class="k">Expected calibration error</td><td class="muted">above ~0.10 — stated probabilities do not match observed rates</td></tr>
+          <tr><td class="k">Brier score</td><td class="muted">no better than the base rate — the calibration adds nothing</td></tr>
+          <tr><td class="k">Reliability curve</td><td class="muted">bins deviate from the diagonal in one direction</td></tr>
+          <tr><td class="k">n per bin</td><td class="muted">under 20 — that bin gets no number of its own</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col stack">
+      <p class="muted small">
+        A calibration is fingerprinted on
+        <code>(judge, model, prompt hash, check, taxonomy version)</code>. Change any of
+        them and the fit no longer applies — the same guard as the taxonomy hash.
+      </p>
+      <h3>Ranking is a plug point, not a formula</h3>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Strategy</th><th>Needs</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td class="k mono">random</td><td class="muted">—</td><td class="muted">baseline, seeded</td></tr>
+          <tr><td class="k mono">output_length</td><td class="muted">outputs</td><td class="muted">baseline — catches a target confounded with length</td></tr>
+          <tr><td class="k mono">majority_label</td><td class="muted">outputs</td><td class="muted">baseline — the trivial classifier</td></tr>
+          <tr><td class="k mono">panel_disagreement</td><td class="muted">panel</td><td class="muted"><strong>a candidate, and a baseline</strong></td></tr>
+          <tr><td class="k mono">raw_confidence</td><td class="muted">verdicts</td><td class="muted">default when uncalibrated</td></tr>
+          <tr><td class="k mono">calibrated_risk</td><td class="muted">verdicts + calibration</td><td class="muted">default when calibrated</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <p class="h">disagreement is a hypothesis here, not a conclusion</p>
+      <p class="small">
+        Published results — on invoice extraction, and on contested label spaces — find
+        panel disagreement ranks errors close to chance and below any single judge. That
+        is why it is not the default. But those are other corpora, and asserting the
+        finding holds for yours without measuring it would be the same unearned
+        confidence this library exists to prevent. So it ships as a selectable strategy
+        <em>and</em> a scored baseline, and the comparison table settles it on your data.
+        If it wins on your corpus, use it.
+      </p>
+    </div>
+
+    <div class="col stack">
+      <h3>The two loops meet at the calibrator, and must not blur</h3>
+    </div>
+
+    <div class="figure">
+<pre>   <b>EVALUATOR VALIDATION LOOP</b>          <span class="d">rare · offline · labels eventually</span>
+   ─────────────────────────
+   sample ─► panel ─► verdicts ─► agreement, judge health
+                               └─► calibration fit ─► FitReport
+                                            │
+                                            │  <span class="d">a fitted calibrator, as data</span>
+                                            ▼
+   <b>PRODUCTION QUALITY LOOP</b>            <span class="d">every run · no labels required</span>
+   ───────────────────────
+   outputs ─► judge ─► raw_confidence ─► calibrated_error_probability
+                                      ─► triage_score ─► human review</pre>
+      <div class="cap">Fig 9 — labels enter the first loop and reach a judge in neither</div>
+    </div>
+
+    <div class="col">
+      <p class="muted small">
+        Downstream of the judge, human labels are used for exactly four things: fitting
+        a calibration, validating it, computing metrics, and evaluating triage.
+      </p>
+    </div>
+  </section>
+
+  <!-- 09 -->
   <section id="guardrails" class="stack-lg">
     <div class="col stack">
-      <p class="eyebrow"><span class="step">08</span> Guardrails</p>
+      <p class="eyebrow"><span class="step">09</span> Guardrails</p>
       <h2>Checks on the measurement, not the data</h2>
       <p class="muted">
         Each catches a failure that otherwise produces a confident, plausible, wrong
@@ -1183,10 +1355,10 @@ judge-c      94%      0%     0.0%  <span class="k">⚠</span></pre>
     </div>
   </section>
 
-  <!-- 09 -->
+  <!-- 10 -->
   <section id="build" class="stack-lg">
     <div class="col stack">
-      <p class="eyebrow"><span class="step">09</span> Build order</p>
+      <p class="eyebrow"><span class="step">10</span> Build order</p>
       <h2>Four weeks, three places to stop</h2>
     </div>
 
@@ -1199,7 +1371,8 @@ judge-c      94%      0%     0.0%  <span class="k">⚠</span></pre>
           <tr><td class="num k">2</td><td class="muted">free checks, full report</td><td class="num muted">3</td></tr>
           <tr><td class="num k">3</td><td class="muted">panel, screening, fuzzy-pair detector</td><td class="num muted">2</td></tr>
           <tr><td class="num k">4</td><td class="k">guardrails, bootstrap, baselines <span class="df">· shippable</span></td><td class="num muted">2</td></tr>
-          <tr><td class="num k">5</td><td class="muted">labels — F1, confusion, operating point</td><td class="num muted">3</td></tr>
+          <tr><td class="num k">5</td><td class="muted">labels — F1, confusion matrix, tree buckets, judge direction</td><td class="num muted">3</td></tr>
+          <tr><td class="num k">5b</td><td class="k">calibration + Error Recall@Budget + strategy comparison <span class="df">· shippable</span></td><td class="num muted">3</td></tr>
           <tr><td class="num k">6</td><td class="k">free text <span class="df">· shippable</span></td><td class="num muted">4</td></tr>
           <tr><td class="num k">7</td><td class="muted">compare, drift, stability hook</td><td class="num muted">2</td></tr>
           <tr><td class="num k">8</td><td class="muted">polish, docs, worked example</td><td class="num muted">2</td></tr>
@@ -1222,6 +1395,8 @@ judge-c      94%      0%     0.0%  <span class="k">⚠</span></pre>
           <tbody>
             <tr><td class="muted"><strong>copied fields</strong> — the seam is ready</td></tr>
             <tr><td class="muted"><strong>derived thresholds</strong> — needs mode 1 data</td></tr>
+            <tr><td class="muted"><strong>isotonic calibration</strong> — overfits below a few hundred labels</td></tr>
+            <tr><td class="muted"><strong>embedding semantic checks</strong> — better than token overlap, adds a dependency</td></tr>
             <tr><td class="muted"><strong>A/B with significance</strong> — needs two real runs</td></tr>
             <tr><td class="muted"><strong>multi-label</strong> — every metric changes</td></tr>
             <tr><td class="muted"><strong>warehouse source and sink</strong></td></tr>
@@ -1237,6 +1412,8 @@ judge-c      94%      0%     0.0%  <span class="k">⚠</span></pre>
             <tr><td class="muted"><strong>Prompt management</strong> — separate concern, mature tools exist</td></tr>
             <tr><td class="muted"><strong>A dashboard</strong> — files feed whatever you already run</td></tr>
             <tr><td class="muted"><strong>Streaming</strong> — batch by design; wrap it if you need to</td></tr>
+            <tr><td class="muted"><strong>Pydantic runtime decorators</strong> — validating one call inline is a guardrail library, a different product</td></tr>
+            <tr><td class="muted"><strong>A fluent assertion DSL</strong> — per-item chaining fights a batch job, and stands up a second config surface beside YAML</td></tr>
           </tbody>
         </table>
       </div>

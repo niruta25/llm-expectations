@@ -47,9 +47,15 @@ written up; the build has not started.
 
 - **Two gates first.** Can the measurement be trusted? Is the judge better than
   guessing? Nothing else is reported until both pass.
-- **One judge ranks, a panel measures.** A single judge's risk score decides
-  which items a human should open. A small panel estimates quality and finds
-  which parts of your taxonomy are fuzzy.
+- **One judge ranks, a panel measures.** A single judge's score decides which
+  items a human should open. A small panel estimates quality and finds which
+  parts of your taxonomy are fuzzy.
+- **A confidence is not a probability.** Raw judge confidence, calibrated error
+  probability and the triage score are three separate things, never silently
+  interconverted. With no labels you still get a ranking — stamped uncalibrated.
+- **Error Recall@Budget is the headline.** "Review 1% and you find 18% of the
+  errors" beats an AUC. Every ranking strategy, including panel disagreement, is
+  scored against the trivial baselines rather than assumed to work.
 - **Three answers, not two.** Pass, fail, and *"we did not check this, here is
   why"* — which never silently becomes a pass.
 - **Collect once, analyse many times.** Judge calls are cached to disk; every
