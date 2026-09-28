@@ -1,8 +1,8 @@
 """Command line entry point.
 
-A placeholder that reports the truth: nothing is implemented yet. The real
-subcommands (``run``, ``plan``, ``analyse``, ``compare``, ``check``) arrive with
-M1 onwards — see DESIGN.md §10.
+A placeholder that reports the truth: the skeleton is in place and nothing runs
+from a terminal yet. The subcommands (``run``, ``plan``, ``analyse``,
+``compare``, ``check``) arrive with M1 onwards — see DESIGN.md §11 and §12.
 """
 
 from __future__ import annotations
@@ -13,10 +13,11 @@ from . import __version__
 
 REPO = "https://github.com/niruta25/llm-expectations"
 
-_MESSAGE = f"""llm-expectations {__version__} — pre-alpha, no functionality yet.
+_MESSAGE = f"""llm-expectations {__version__} — pre-alpha, nothing to run yet.
 
-This release reserves the name. The design is finished; the build has not
-started. Planned commands:
+M0 has landed: types, schema, taxonomy, readers and config. A project loads and
+validates in Python (``llm_expectations.load_run("run.yml")``); no checks run
+and nothing calls a model. Planned commands:
 
   run       collect judge verdicts and analyse
   plan      estimate cost, make no calls

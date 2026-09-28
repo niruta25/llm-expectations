@@ -1,0 +1,14 @@
+# Everything here has a built-in default, so this file can be deleted whole.
+# It exists in the example to show the middle layer of the merge: a value set
+# here beats the default and loses to a field's own block.
+#
+# One thing cannot be set, here or anywhere: the label-leak assertion. That is
+# not a threshold, it is a bug check.
+
+# Thirteen items is far below any floor in the library, and that is the point
+# of the fixture — the guardrails should refuse to report what it cannot
+# support, rather than printing a confident number off thirteen rows.
+min_n_ranking: 200
+min_n_distribution: 200
+
+fuzzy_pair_report: 5

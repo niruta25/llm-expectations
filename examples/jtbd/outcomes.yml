@@ -1,0 +1,27 @@
+# A small vocabulary, so it is an assigned field and not free text. Same
+# information, a fraction of the cost, far better checks.
+
+id: outcomes
+version: 1
+
+labels:
+  resolved:
+    definition: "The customer's problem was fixed before the session ended."
+    examples: ["the new card went through", "the reset link worked"]
+    not_this:
+      - "a fix was promised but not confirmed → outcomes.pending"
+  pending:
+    definition: "Work is outstanding and the customer is waiting."
+    examples: ["waiting on the bank", "a fix is queued for the next release"]
+    not_this:
+      - "handed to another team → outcomes.escalated"
+  escalated:
+    definition: "The session was handed to another team or a higher tier."
+    examples: ["passed to engineering", "raised to the billing specialists"]
+    not_this:
+      - "the same agent is still working it → outcomes.pending"
+  unresolved:
+    definition: "The session ended with the problem unfixed and no plan to fix it."
+    examples: ["the customer gave up", "no reproduction, ticket closed"]
+    not_this:
+      - "someone is still working it → outcomes.pending"

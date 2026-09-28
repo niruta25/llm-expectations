@@ -1,0 +1,13 @@
+{"id": "s-01", "text": "Maya wrote in March 3. Her card ending 4471 was declined when the subscription auto-renewed. She gave us a different card and the $49 charge went through.", "channel": "email"}
+{"id": "s-02", "text": "Devan was billed twice for the same month after switching plans on the 12th. He asked for the duplicate charge to be reversed. We confirmed the second charge and started the refund.", "channel": "email"}
+{"id": "s-03", "text": "Priya could not sign in and said the password reset email never arrived. We found it bouncing off her work mail server and sent it to her personal address instead.", "channel": "chat"}
+{"id": "s-04", "text": "Tom exports his ledger every Friday. Since the update, the CSV export spins for a minute and then throws an error on any file over about 20,000 rows. Smaller exports are fine.", "channel": "email"}
+{"id": "s-05", "text": "Anika's team signs in through Okta. Since Tuesday the handoff comes back with an error about a rejected assertion, so nobody on her team can get in. Passwords are not involved.", "channel": "chat"}
+{"id": "s-06", "text": "Ben works late and asked whether we have a dark theme. We do not. He said the white background is hard on his eyes after 9pm and asked us to pass it on.", "channel": "email"}
+{"id": "s-07", "text": "Rosa's bank refused the card on the renewal attempt and sent her a fraud alert text. She approved it with the bank and asked us to try the charge again.", "channel": "chat"}
+{"id": "s-08", "text": "Ellis paid for a year up front in January and stopped using the product in March. He wants the unused nine months back and asked what our policy says.", "channel": "email"}
+{"id": "s-09", "text": "Sam is stuck in a reset loop: the link takes him to the password page, he sets a new one, and the next sign-in rejects it. He has tried this four times today.", "channel": "chat"}
+{"id": "s-10", "text": "Noor's Amex was declined twice on the renewal. She read out a Visa instead and the charge cleared on the first try.", "channel": "chat"}
+{"id": "s-11", "text": "Jae reported that the weekly digest email shows last week's totals rather than this week's. He attached two screenshots a week apart with identical figures.", "channel": "email"}
+{"id": "s-12", "text": "Omar's company moved to a new identity provider last month. Sign-in now fails at the provider with a certificate error. We asked for their metadata file and a screenshot of the error.", "channel": "chat"}
+{"id": "s-13", "text": "Lena cannot reach the billing page at all — it loads a blank panel with a spinner that never stops. She can get into everything else in the product. We asked her to try a private window.", "channel": "email"}

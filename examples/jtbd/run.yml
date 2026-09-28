@@ -1,0 +1,17 @@
+run_id: jtbd-p8                  # a timestamp is added automatically
+
+items:    items.jsonl
+outputs:  outputs.jsonl
+labels:   labels.jsonl
+schema:   schema.yml
+taxonomy: [taxonomy.yml, outcomes.yml]
+judges:   judges.yml
+settings: settings.yml
+
+produced_by:
+  model: claude-sonnet-5
+  prompt_version: p8
+
+budget:
+  max_usd: 5.00
+  confirm: true

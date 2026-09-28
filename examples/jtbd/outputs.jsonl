@@ -1,0 +1,13 @@
+{"item_id": "s-01", "jtbd": "billing.card_declined", "summary": "Maya's card ending 4471 was declined at auto-renewal; a different card cleared the $49 charge.", "outcome": "resolved", "confidence": 0.91}
+{"item_id": "s-02", "jtbd": "billing.refund_request", "summary": "Devan was charged twice after a plan switch on the 12th and asked for the duplicate reversed.", "outcome": "pending", "confidence": 0.88}
+{"item_id": "s-03", "jtbd": "access.password_reset", "summary": "Priya's reset email bounced off her work mail server; resending to her personal address worked.", "outcome": "resolved", "confidence": 0.93}
+{"item_id": "s-04", "jtbd": "product.bug_report", "summary": "Tom's CSV export errors out above roughly 20,000 rows since the update; smaller exports work.", "outcome": "resolved", "confidence": 0.86}
+{"item_id": "s-05", "jtbd": "access.sso_issue", "summary": "Anika's team cannot sign in through Okta since Tuesday: the assertion comes back rejected.", "outcome": "escalated", "confidence": 0.9}
+{"item_id": "s-06", "jtbd": "product.feature_request", "summary": "Ben asked for a dark theme, saying the white background is hard on his eyes after 9pm.", "outcome": "unresolved", "confidence": 0.87}
+{"item_id": "s-07", "jtbd": "billing.payment_failed", "summary": "Rosa's bank refused the renewal card and sent a fraud alert; she cleared it and wants a retry.", "outcome": "pending", "confidence": 0.62}
+{"item_id": "s-08", "jtbd": "billing", "summary": "Ellis paid a year up front in January, stopped in March, and wants the unused nine months back.", "outcome": "pending", "confidence": 0.55}
+{"item_id": "s-09", "jtbd": "access.login_broken", "summary": "Sam is stuck in a reset loop: the new password is rejected on the next sign-in, four times today.", "outcome": "unresolved", "confidence": 0.71}
+{"item_id": "s-10", "jtbd": "billing.card_declined", "summary": "Noor's Amex was declined twice at renewal, so we issued a refund of $49.", "outcome": "resolved", "confidence": 0.88}
+{"item_id": "s-11", "jtbd": "product.bug_report", "summary": "The customer had a problem and it was resolved.", "outcome": "pending", "confidence": 0.9}
+{"item_id": "s-12", "jtbd": "access.sso_issue", "summary": "Omar's card was declined at renewal and a new card fixed it.", "outcome": "pending", "confidence": 0.84}
+{"item_id": "s-13", "jtbd": null, "summary": "Lena cannot reach the billing page at all - it loads a blank panel with a spinner that never stops. She can get into everything else in the product.", "outcome": "pending", "confidence": 0.41}
