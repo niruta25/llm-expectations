@@ -83,3 +83,39 @@ def project(tmp_path: Path):
         return tmp_path / "run.yml"
 
     return build
+
+
+@pytest.fixture
+def scripted():
+    """A judge that answers from a script keyed on the item text it is shown."""
+    from llm_expectations.judges.fake import FakeProvider, reply
+
+    def build(rules=(), default=None, **kwargs):
+        return FakeProvider(
+            rules=tuple(rules),
+            default=default if default is not None else reply(True, 0.9, "looks right"),
+            **kwargs,
+        )
+
+    return build
+
+
+@pytest.fixture
+def no_confirm():
+    """Strip the cost prompt from a config, the way ``--yes`` does."""
+    import dataclasses
+
+    from llm_expectations.config import Budget
+
+    def build(config, max_usd=None):
+        return dataclasses.replace(config, budget=Budget(max_usd=max_usd, confirm=False))
+
+    return build
+
+
+@pytest.fixture
+def settings():
+    """Built-in defaults, with nothing overridden."""
+    from llm_expectations.config import settings_from_mapping
+
+    return settings_from_mapping({})

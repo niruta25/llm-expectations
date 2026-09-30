@@ -305,6 +305,7 @@ class RunConfig:
     """Everything one run needs, loaded and cross-checked."""
 
     run_id: str
+    source: Path
     root: Path
     schema: Schema
     taxonomies: Mapping[str, Taxonomy]
@@ -366,6 +367,7 @@ def load_run(path: str | Path) -> RunConfig:
 
     return RunConfig(
         run_id=run_id,
+        source=path.resolve(),
         root=root,
         schema=schema,
         taxonomies=taxonomies,
