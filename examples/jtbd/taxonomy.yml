@@ -1,0 +1,82 @@
+# The label tree for "what was this support session about?".
+#
+# Every definition here is read by four things: the judge prompt, the validity
+# check, tree scoring, and the human annotator. The last one is why the wording
+# is plain — a judge and an annotator reading different definitions makes their
+# disagreement uninterpretable.
+#
+# `not_this` is the part that does the work. A definition says what a label
+# covers; a boundary case says where it stops, and that is where both a model
+# and a person get confused.
+
+id: jtbd
+version: 4
+
+labels:
+  billing:
+    definition: "Anything about money moving, or failing to move."
+    examples: ["a charge did not go through", "asking to be paid back"]
+    not_this:
+      - "cannot reach the payment page at all → access.*"
+    children:
+      payment_failed:
+        definition: "A charge was attempted and the payment did not complete."
+        examples:
+          - "the renewal charge never went through"
+          - "insufficient funds on the account"
+        not_this:
+          - "the issuer specifically refused the card → billing.card_declined"
+          - "asking for money back → billing.refund_request"
+
+      card_declined:
+        definition: "The customer's bank or card issuer refused the card."
+        examples:
+          - "card ending 4471 was declined"
+          - "the bank blocked the transaction as suspicious"
+        not_this:
+          - "the charge failed but the issuer was never reached → billing.payment_failed"
+          - "the card worked and they want the money back → billing.refund_request"
+
+      refund_request:
+        definition: "The customer is asking for money to be returned."
+        examples:
+          - "wants the duplicate charge reversed"
+          - "asking to be refunded for the annual plan"
+        not_this:
+          - "a charge that never succeeded → billing.payment_failed"
+
+  access:
+    definition: "Anything about getting into the account."
+    examples: ["cannot sign in", "single sign-on is broken"]
+    not_this:
+      - "signed in fine but the product misbehaved → product.*"
+    children:
+      password_reset:
+        definition: "The customer cannot sign in with their password and needs it reset."
+        examples: ["forgot the password", "the reset email never arrived"]
+        not_this:
+          - "sign-in goes through the company's identity provider → access.sso_issue"
+
+      sso_issue:
+        definition: "Single sign-on through an identity provider is failing."
+        examples: ["Okta hands back an error", "SAML assertion rejected"]
+        not_this:
+          - "an ordinary password that does not work → access.password_reset"
+
+  product:
+    definition: "Anything about how the product itself behaves."
+    examples: ["a button does nothing", "asking for something that does not exist"]
+    not_this:
+      - "the product is fine but they cannot get in → access.*"
+    children:
+      bug_report:
+        definition: "Something in the product does not work as it should."
+        examples: ["export crashes on large files", "the total is calculated wrong"]
+        not_this:
+          - "it works, they just want it to do more → product.feature_request"
+
+      feature_request:
+        definition: "The customer wants something the product does not do."
+        examples: ["asking for a dark theme", "wants a weekly digest email"]
+        not_this:
+          - "it used to work and stopped → product.bug_report"

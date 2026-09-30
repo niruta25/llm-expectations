@@ -1,0 +1,21 @@
+item: support_session
+
+fields:
+  jtbd:
+    kind: assigned
+    taxonomy: jtbd@v4
+    require_leaf: true
+    allow_abstain: true
+
+  summary:
+    kind: free_text
+    style: descriptive
+    min_words: 5
+    max_words: 30
+    must_agree_with: [jtbd]
+
+  # A handful of possible values, so it is assigned rather than free text.
+  # Same information, a fraction of the cost, far better checks.
+  outcome:
+    kind: assigned
+    taxonomy: outcomes@v1

@@ -1,0 +1,125 @@
+# What this fixture plants, and what has to catch it.
+#
+# The acceptance test for every milestone is that the tool flags exactly these
+# items — no more, no fewer. A check that also flags s-01 is as broken as one
+# that misses s-10.
+#
+# `caught_by` names the check id that must produce the finding, and `milestone`
+# says when that check exists. Before then a plant is simply unclaimed, which
+# is honest: an unscored item is not a passing one.
+
+corpus:
+  items: 13
+  fields: [jtbd, summary, outcome]
+
+plants:
+  - item: s-07
+    field: jtbd
+    defect: sibling_confusion
+    truth: billing.card_declined
+    output: billing.payment_failed
+    caught_by: [label_tree_bucket]
+    milestone: M5
+    note: >-
+      The issuer refused the card, which is card_declined. Both labels are real
+      leaves and both are billing, so every free check passes it. This is the
+      shape of error that only a label or a judge can find — and it lands in
+      the "right parent" bucket, which points at the definitions rather than
+      at the model.
+
+  - item: s-08
+    field: jtbd
+    defect: too_shallow
+    truth: billing.refund_request
+    output: billing
+    caught_by: [valid_leaf]
+    milestone: M2
+    note: >-
+      A real label, stopped one level up. Free to catch, and it means the model
+      is hedging rather than misreading.
+
+  - item: s-09
+    field: jtbd
+    defect: invented_label
+    truth: access.password_reset
+    output: access.login_broken
+    caught_by: [label_in_taxonomy]
+    milestone: M2
+    note: >-
+      Not in the tree at any version. Either the model invented it or the
+      taxonomy moved under the run.
+
+  - item: s-10
+    field: summary
+    defect: invented_claim
+    output_claim: "we issued a refund of $49"
+    caught_by: [claims_supported]
+    milestone: M6
+    note: >-
+      The label is right and the summary is specific, fluent and the correct
+      length. Nothing free catches it; it needs the claim judge. The producing
+      model reported 0.88 confidence, which is the point — a raw confidence is
+      a feeling, not a probability of error.
+
+  - item: s-11
+    field: summary
+    defect: filler
+    caught_by: [specificity]
+    milestone: M6
+    note: >-
+      "The customer had a problem and it was resolved" is true of every session
+      in the corpus. No rare token from its own item appears in it.
+
+  - item: s-12
+    field: summary
+    defect: contradicts_field
+    caught_by: [cross_field_agreement]
+    milestone: M2
+    note: >-
+      Label says access.sso_issue; the summary is about a declined card. Free,
+      item-grain, and it fires without knowing which of the two is wrong — that
+      is the finding, not a failure of it.
+
+  - item: s-13
+    field: summary
+    defect: copied
+    caught_by: [copy_ratio]
+    milestone: M6
+    note: >-
+      Most of the summary is a verbatim run from the item. It is inside the
+      word bounds, so length does not catch it and copy ratio must.
+
+  - item: s-04
+    field: outcome
+    defect: wrong_label
+    truth: pending
+    output: resolved
+    caught_by: [label_correct]
+    milestone: M5
+    note: >-
+      Here so that item grain and field grain differ. s-04 is right on jtbd and
+      right on summary, and the item is still not usable. The item number is
+      always the worse one, and it is the one a consumer needs.
+
+# Correct behaviour that a check must not mistake for a defect.
+correct_but_unusual:
+  - item: s-13
+    field: jtbd
+    behaviour: abstain
+    note: >-
+      "Cannot reach the billing page" has no leaf in jtbd@v4 — billing's own
+      boundary sends it to access.*, and neither access leaf fits. Abstaining
+      is the right answer and must not be scored as wrong. The taxonomy gap is
+      the finding, and it is what an abstention rate above the band is telling
+      you.
+
+clean: [s-01, s-02, s-03, s-05, s-06]
+
+# Two seeded errors from DESIGN.md §12 are deliberately absent.
+#
+# Collapse (one label swallowing the batch) and drift (a label's share moving
+# against the previous run) are corpus-scale shapes. Planting them here would
+# mean padding the fixture with nine near-identical sessions, which makes it
+# worse as something to read. They get generated fixtures in the corpus-check
+# tests at M2, where the checks are written.
+not_planted_here: [collapse, drift]

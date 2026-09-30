@@ -27,9 +27,20 @@ against. This tool covers those two kinds of field — **assigned** labels and
 
 ## Status
 
-**Pre-alpha.** `0.0.0` reserves the name and has no functionality — it installs
-with zero dependencies and prints its own status. The design is settled and
-written up; the build has not started.
+**Pre-alpha.** The skeleton is in place. A project — items, outputs, schema,
+taxonomy, judges, settings — loads and validates in Python, and a worked
+example with deliberately planted defects lives in [`examples/jtbd/`][example].
+Nothing calls a model and no checks run yet; that starts at M1.
+
+```python
+from llm_expectations import load_run
+
+config = load_run("examples/jtbd/run.yml")
+config.settings.resolve("max_words", config.schema["summary"])
+# Resolved(value=30, source='schema.yml:summary')
+```
+
+[example]: https://github.com/niruta25/llm-expectations/tree/main/examples/jtbd
 
 ## Reading order
 
@@ -67,12 +78,13 @@ written up; the build has not started.
 
 | | | |
 |---|---|---|
-| M0 | skeleton | |
-| M1 | one judge, end to end | **first shippable** |
+| M0 | skeleton | **done** |
+| M1 | one judge, end to end | first shippable |
 | M2 | free checks + full report | |
 | M3 | panel | |
 | M4 | guardrails + stats | shippable |
 | M5 | labels (Mode 1) | |
+| M5b | calibration + triage evaluation | shippable |
 | M6 | free text | shippable |
 | M7 | across runs | |
 | M8 | polish | |

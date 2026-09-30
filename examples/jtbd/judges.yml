@@ -1,0 +1,32 @@
+# Two jobs, wired separately. The panel measures and locates fuzzy label
+# boundaries; one judge ranks what a human should open first. Disagreement is
+# deliberately not the routing signal — it ships as a scored baseline instead,
+# and the comparison table settles it on your data.
+
+judges:
+  - id: judge-a
+    provider: anthropic
+    model: claude-sonnet-5
+    api_key_env: ANTHROPIC_API_KEY     # the NAME of the variable, never the key
+    temperature: 0
+    max_tokens: 60
+
+  - id: judge-b
+    provider: openai
+    model: gpt-5-mini
+    api_key_env: OPENAI_API_KEY
+
+  - id: judge-c
+    provider: openai_compatible        # a local box: vLLM, LM Studio
+    endpoint: http://gpu-01:1234/v1
+    model: qwen2.5-14b-instruct
+
+panel:
+  members: [judge-a, judge-b, judge-c]
+  sample: 300                          # more than this corpus holds; it caps, not pads
+
+triage:
+  judge: judge-a
+  scope: all
+  strategy: auto                       # calibrated_risk if fitted, else raw_confidence
+  budgets: [0.01, 0.05, 0.10, 0.20]
