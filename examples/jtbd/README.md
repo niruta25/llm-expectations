@@ -63,13 +63,23 @@ looked. Every unchecked field carries an unscored finding naming what is
 missing, and the report's closing box lists it.
 
 The pair `billing.payment_failed` ↔ `billing.card_declined` is the intended
-fuzzy boundary, and all three sources of evidence for it are in this fixture:
+fuzzy boundary, and all three sources of evidence for it are in this fixture
+and all three now work:
 
-- **Panel disagreement**, free and available today. When judges split on
-  `s-07` or `s-10`, the dissenter names the label it would assign instead and
-  the pair becomes a boundary rather than a guess.
-- **A confusion matrix**, at M5, which adds direction — symmetric means fix
-  the taxonomy, one-way means fix the prompt.
-- **Two annotators disagreeing**, the strongest evidence of the three.
-  `ann-2` splits from `ann-1` on exactly that pair in `s-07` and `s-10`. Two
-  people who cannot separate two labels is not a model problem.
+- **Panel disagreement**, free. When judges split on `s-07` or `s-10`, the
+  dissenter names the label it would assign instead and the pair becomes a
+  boundary rather than a guess.
+- **The confusion matrix**, which adds direction — symmetric means fix the
+  taxonomy, one-way means fix the prompt. At thirteen items each pair is
+  seen once, so the tool reports `too few to tell` rather than calling a
+  direction off a single observation.
+- **Two annotators disagreeing**, the strongest of the three. `ann-2` splits
+  from `ann-1` on exactly that pair in `s-07` and `s-10`, and the report
+  says what that means: *your annotators cannot separate these two either.*
+
+`s-04` is worth a second look. Its `outcome` is wrong (`resolved` where the
+human said `pending`) but `outcomes@v1` is **flat** — every label is a root —
+so there is no branch to have partially got right, and it lands in `wrong`
+rather than `right parent`. A shared *absence* of a parent is not partial
+credit, and scoring it as one would advise sharpening two definitions on a
+vocabulary that has no hierarchy to confuse.

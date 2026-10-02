@@ -118,12 +118,16 @@ class TestModes:
     def test_mode_reports_the_data_shape_and_the_floors_do_the_refusing(
         self, example, provider, tmp_path
     ):
-        # Thirteen labels is mode 1 by shape and far below every floor. The
-        # report must not turn it into a quality number.
+        # Thirteen labels is mode 1 by shape, so the classification metrics
+        # are computed — and every one of them carries the caveat its sample
+        # size earns. Hiding them would lose the only information thirteen
+        # rows actually hold; printing them bare would be the lie.
         result = execute(example, tmp_path / "out", provider)
         assert result.metrics["modes"]["outcome"] == 1
-        assert "macro F1" not in result.report
-        assert "accuracy" not in result.report.lower()
+        assert "macro F1" in result.report
+        assert "cannot support a conclusion" in result.report
+        # And no ranking claim is made off thirteen rows.
+        assert "gate2.auc" in result.report
 
 
 class TestCache:
@@ -493,3 +497,65 @@ class TestFindingsAreNotPooledAcrossJudges:
         # must not drag that towards a pass.
         assert scored
         assert all(f.status is Status.FAIL for f in scored)
+
+
+class TestTheManifestCoversTheWholePipeline:
+    """`expected.yml` must account for every check that fires, not just free ones."""
+
+    @staticmethod
+    def manifest():
+        import yaml
+
+        from .conftest import EXAMPLE
+
+        return yaml.safe_load((EXAMPLE / "expected.yml").read_text())
+
+    def test_no_clean_item_is_flagged_by_anything_in_the_full_run(
+        self, example, provider, tmp_path
+    ):
+        result = run(
+            example, out=tmp_path / "out", provider_factory=lambda spec: provider
+        )
+        flagged = {f.item_id for f in result.findings if f.status is Status.FAIL and f.item_id}
+        assert not flagged & set(self.manifest()["clean"])
+
+    def test_every_flagged_item_is_one_the_manifest_planted(
+        self, example, provider, tmp_path
+    ):
+        result = run(
+            example, out=tmp_path / "out", provider_factory=lambda spec: provider
+        )
+        flagged = {f.item_id for f in result.findings if f.status is Status.FAIL and f.item_id}
+        planted = {plant["item"] for plant in self.manifest()["plants"]}
+        assert flagged <= planted, f"unaccounted: {sorted(flagged - planted)}"
+
+    def test_every_plant_due_by_now_is_caught_by_the_check_that_owns_it(
+        self, example, provider, tmp_path
+    ):
+        landed = {"M1", "M2", "M3", "M4", "M5"}
+        result = run(
+            example, out=tmp_path / "out", provider_factory=lambda spec: provider
+        )
+        failed = {(f.item_id, f.check) for f in result.findings if f.status is Status.FAIL}
+        for plant in self.manifest()["plants"]:
+            if plant["milestone"] not in landed:
+                continue
+            assert any((plant["item"], check) in failed for check in plant["caught_by"]), (
+                f"{plant['item']} ({plant['defect']}) was not caught by {plant['caught_by']}"
+            )
+
+    def test_the_abstention_is_never_scored_as_a_wrong_answer(
+        self, example, provider, tmp_path
+    ):
+        # s-13 abstains because jtbd@v4 has no leaf for it. That is the right
+        # answer, and counting it as a model error would turn a taxonomy gap
+        # into a quality number.
+        result = run(
+            example, out=tmp_path / "out", provider_factory=lambda spec: provider
+        )
+        rows = [
+            f
+            for f in result.findings
+            if f.item_id == "s-13" and f.field == "jtbd" and f.check == "label_tree_bucket"
+        ]
+        assert rows and all(f.status is Status.UNSCORED for f in rows)

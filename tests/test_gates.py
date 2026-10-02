@@ -263,3 +263,105 @@ class TestGatesInTheReport:
             config, out=tmp_path / "out", provider_factory=lambda spec: provider
         ).report
         assert [line for line in report.splitlines() if len(line) > 80] == []
+
+
+class TestAgainstHumans:
+    """What mode 1 and mode 2 unlock, end to end."""
+
+    def test_the_classification_block_appears_once_labels_exist(self, big, tmp_path):
+        config, provider, _ = big()
+        result = run(config, out=tmp_path / "out", provider_factory=lambda spec: provider)
+        scored = result.metrics["vs_humans"]["fields"]["jtbd"]
+        assert scored["macro_f1"] is not None
+        assert scored["accuracy"] is not None
+        assert scored["majority_baseline"] is not None
+
+    def test_accuracy_never_appears_without_its_baseline(self, big, tmp_path):
+        config, provider, _ = big()
+        report = run(
+            config, out=tmp_path / "out", provider_factory=lambda spec: provider
+        ).report
+        for line in report.splitlines():
+            if line.strip().startswith("accuracy"):
+                assert "majority-label baseline" in line
+
+    def test_the_tree_buckets_add_up_to_the_labelled_corpus(self, big, tmp_path):
+        config, provider, _ = big(n=400)
+        result = run(config, out=tmp_path / "out", provider_factory=lambda spec: provider)
+        scored = result.metrics["vs_humans"]["fields"]["jtbd"]
+        assert sum(scored["buckets"].values()) == scored["n"] == 400
+
+    def test_a_sibling_heavy_corpus_surfaces_that_boundary(self, big_corpus, oracle_judge,
+                                                            tmp_path):
+        import dataclasses
+
+        root, truth = big_corpus(n=600, error_rate=0.3, sibling_bias=0.9)
+        config = dataclasses.replace(load_run(root / "run.yml"), budget=Budget(None, False))
+        result = run(
+            config,
+            out=tmp_path / "out",
+            provider_factory=lambda spec: oracle_judge(truth),
+        )
+        pairs = result.metrics["vs_humans"]["fields"]["jtbd"]["confusion_direction"]
+        top = pairs[0]
+        assert set(top["pair"]) == {"billing.payment_failed", "billing.card_declined"}
+        assert top["shape"] == "symmetric"
+        assert "taxonomy" in top["verdict"]
+
+    def test_two_annotators_unlock_the_strongest_evidence(self, big_corpus, oracle_judge,
+                                                           tmp_path):
+        import dataclasses
+
+        root, truth = big_corpus(n=400, error_rate=0.2, second_annotator=200, sibling_bias=0.9)
+        config = dataclasses.replace(load_run(root / "run.yml"), budget=Budget(None, False))
+        result = run(
+            config, out=tmp_path / "out", provider_factory=lambda spec: oracle_judge(truth)
+        )
+        humans = result.metrics["vs_humans"]["fields"]["jtbd"]["annotators"]
+        assert humans["compared"] == 200
+        assert humans["agreement"] < 1.0
+        top = humans["pairs"][0]
+        assert {top["left"], top["right"]} == {
+            "billing.payment_failed",
+            "billing.card_declined",
+        }
+
+    def test_a_judge_that_cannot_beat_approving_everything_is_named(
+        self, big_corpus, oracle_judge, tmp_path
+    ):
+        import dataclasses
+
+        root, truth = big_corpus(n=400, error_rate=0.1)
+        config = dataclasses.replace(load_run(root / "run.yml"), budget=Budget(None, False))
+        # Catches almost nothing and false-alarms often: worse than silence.
+        provider = oracle_judge(truth, catches=0.1, false_alarms=0.3)
+        result = run(config, out=tmp_path / "out", provider_factory=lambda spec: provider)
+        judges = {row["judge"]: row for row in result.metrics["vs_humans"]["judges"]}
+        assert judges["judge-a"]["beats_always_approve"] is False
+        assert "does not beat approving everything" in result.report
+
+    def test_judge_direction_is_reported_per_judge(self, big, tmp_path):
+        config, provider, _ = big()
+        result = run(config, out=tmp_path / "out", provider_factory=lambda spec: provider)
+        for row in result.metrics["vs_humans"]["judges"]:
+            assert row["approves_wrong"] is not None
+            assert row["rejects_right"] is not None
+            assert row["leaning"] in {"lenient", "strict", "balanced", "unknown"}
+
+    def test_a_field_with_no_labels_gets_no_classification_block(
+        self, example, provider, tmp_path
+    ):
+        result = run(
+            example, out=tmp_path / "out", provider_factory=lambda spec: provider
+        )
+        fields = result.metrics["vs_humans"]["fields"]
+        assert "summary" not in fields  # free text, and unlabelled
+        assert "jtbd" in fields
+
+    def test_labels_still_never_reach_a_judge(self, big, tmp_path):
+        # M5 is the milestone where labels finally get used. They are used
+        # downstream of every call, and the prompts must still be clean.
+        config, provider, _ = big()
+        run(config, out=tmp_path / "out", provider_factory=lambda spec: provider)
+        for request in provider.calls:
+            assert "ann-1" not in request.user and "ann-1" not in request.system

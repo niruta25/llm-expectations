@@ -27,12 +27,16 @@ plants:
       the "right parent" bucket, which points at the definitions rather than
       at the model.
 
+      It is also where the two annotators disagree, which is the strongest
+      evidence of the three that this boundary is the taxonomy's fault.
+
   - item: s-08
     field: jtbd
     defect: too_shallow
     truth: billing.refund_request
     output: billing
     caught_by: [valid_leaf]
+    also_caught_by: [label_tree_bucket]
     milestone: M2
     note: >-
       A real label, stopped one level up. Free to catch, and it means the model
@@ -44,6 +48,7 @@ plants:
     truth: access.password_reset
     output: access.login_broken
     caught_by: [label_in_taxonomy]
+    also_caught_by: [label_tree_bucket, cross_field_agreement]
     milestone: M2
     note: >-
       Not in the tree at any version. Either the model invented it or the
@@ -102,12 +107,16 @@ plants:
     defect: wrong_label
     truth: pending
     output: resolved
-    caught_by: [label_correct]
+    caught_by: [label_tree_bucket]
     milestone: M5
     note: >-
       Here so that item grain and field grain differ. s-04 is right on jtbd and
       right on summary, and the item is still not usable. The item number is
       always the worse one, and it is the one a consumer needs.
+
+      It lands in the "wrong" bucket rather than "right parent": outcomes@v1
+      is flat, so there is no branch to have got right. A shared *absence* of
+      a parent is not partial credit.
 
 # The contract the tests enforce, stated once so it is not inferred:
 #

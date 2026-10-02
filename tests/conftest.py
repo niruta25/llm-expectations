@@ -144,8 +144,14 @@ def big_corpus(tmp_path):
         "product.bug_report",
         "product.feature_request",
     ]
+    SIBLINGS = {
+        "billing.payment_failed": "billing.card_declined",
+        "billing.card_declined": "billing.payment_failed",
+    }
 
-    def build(n=400, error_rate=0.2, seed=0):
+    def build(n=400, error_rate=0.2, seed=0, second_annotator=0, sibling_bias=0.0):
+        """`second_annotator` doubly-labels that many items; `sibling_bias`
+        is the share of errors forced onto the confusable billing pair."""
         rng = random.Random(seed)
         root = tmp_path / f"corpus-{n}-{seed}"
         root.mkdir(parents=True, exist_ok=True)
@@ -153,7 +159,12 @@ def big_corpus(tmp_path):
         for i in range(n):
             truth = rng.choice(LABELS)
             wrong = rng.random() < error_rate
-            assigned = rng.choice([x for x in LABELS if x != truth]) if wrong else truth
+            if not wrong:
+                assigned = truth
+            elif rng.random() < sibling_bias and truth in SIBLINGS:
+                assigned = SIBLINGS[truth]
+            else:
+                assigned = rng.choice([x for x in LABELS if x != truth])
             truth_by_item[f"s-{i}"] = (assigned, truth)
             items.append(
                 {
@@ -166,6 +177,16 @@ def big_corpus(tmp_path):
             labels.append(
                 {"item_id": f"s-{i}", "field": "jtbd", "label": truth, "annotator": "ann-1"}
             )
+            if i < second_annotator:
+                # A second human who cannot separate the confusable pair
+                # either — the strongest evidence a taxonomy is wrong.
+                other = truth
+                if truth in SIBLINGS and rng.random() < 0.5:
+                    other = SIBLINGS[truth]
+                labels.append(
+                    {"item_id": f"s-{i}", "field": "jtbd", "label": other,
+                     "annotator": "ann-2"}
+                )
 
         for name, rows in (
             ("items.jsonl", items),
