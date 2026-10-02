@@ -123,9 +123,10 @@ class TestGateTwo:
         gate = result.metrics["gates"]["beats_baselines"]
         assert gate["status"] == "PASS"
         table = {row["strategy"]: row for row in gate["table"]}
-        assert table["raw_confidence"]["auc"] > 0.8
+        judge = next(row for row in gate["table"] if not row["baseline"])
+        assert judge["auc"] > 0.8
         assert all(
-            table["raw_confidence"]["ci_low"] > table[name]["auc"]
+            judge["ci_low"] > table[name]["auc"]
             for name in table
             if table[name]["baseline"] and table[name]["auc"] is not None
         )
@@ -159,7 +160,8 @@ class TestGateTwo:
         gate = result.metrics["gates"]["beats_baselines"]
         names = {r["strategy"]: r for r in gate["table"]}
         assert names["panel_disagreement"]["baseline"] is True
-        assert result.metrics["strategy"] == "raw_confidence"
+        # Whichever strategy ranks, disagreement is never it.
+        assert result.metrics["strategy"] != "panel_disagreement"
 
     def test_the_table_carries_an_interval_for_every_row(self, big, tmp_path):
         config, provider, _ = big()
@@ -253,7 +255,7 @@ class TestGatesInTheReport:
         report = run(
             config, out=tmp_path / "out", provider_factory=lambda spec: provider
         ).report
-        for name in ("raw_confidence", "random", "output_length", "majority_label"):
+        for name in ("random", "output_length", "majority_label"):
             assert name in report
         assert "← the judge" in report and "← baseline" in report
 
@@ -365,3 +367,127 @@ class TestAgainstHumans:
         run(config, out=tmp_path / "out", provider_factory=lambda spec: provider)
         for request in provider.calls:
             assert "ann-1" not in request.user and "ann-1" not in request.system
+
+
+class TestCalibrationEndToEnd:
+    """Fitting in the run, and what the fit is allowed to claim."""
+
+    def test_a_large_labelled_corpus_fits_and_switches_the_strategy(self, big, tmp_path):
+        config, provider, _ = big(n=600)
+        result = run(config, out=tmp_path / "out", provider_factory=lambda spec: provider)
+        assert result.metrics["calibration"]["fitted"]
+        assert result.metrics["calibrated"] is True
+        assert result.metrics["strategy"] == "calibrated_risk"
+
+    def test_a_small_corpus_fits_nothing_and_stays_stamped(self, example, provider, tmp_path):
+        result = run(
+            example, out=tmp_path / "out", provider_factory=lambda spec: provider
+        )
+        assert not result.metrics["calibration"]["fitted"]
+        assert result.metrics["calibrated"] is False
+        assert result.metrics["strategy"] == "raw_confidence"
+        assert "UNCALIBRATED" in result.report
+
+    def test_a_calibrated_run_stops_claiming_to_be_uncalibrated(self, big, tmp_path):
+        config, provider, _ = big(n=600)
+        report = run(
+            config, out=tmp_path / "out", provider_factory=lambda spec: provider
+        ).report
+        assert "UNCALIBRATED" not in report
+        assert "a fitted probability of error, not a feeling" in report
+
+    def test_one_field_means_the_order_is_unchanged_and_it_says_so(self, big, tmp_path):
+        # The corpus has a single assigned field, so one curve covers
+        # everything — and a Platt curve is monotone.
+        config, provider, _ = big(n=600)
+        result = run(config, out=tmp_path / "out", provider_factory=lambda spec: provider)
+        assert result.metrics["calibration"]["reorders"] is False
+        assert "monotone" in result.metrics["calibration"]["why"]
+
+    def test_the_fit_is_written_to_disk_with_its_fingerprint(self, big, tmp_path):
+        import json
+
+        config, provider, _ = big(n=600)
+        result = run(config, out=tmp_path / "out", provider_factory=lambda spec: provider)
+        stored = json.loads((result.directory / "calibration.json").read_text())
+        assert stored["fingerprint"]
+        assert stored["model"]["per_field"]
+
+    def test_re_analysing_against_a_moved_project_is_refused(
+        self, big_corpus, oracle_judge, tmp_path
+    ):
+        import dataclasses
+
+        from llm_expectations.calibration.base import StaleCalibration
+        from llm_expectations.run import analyse_run
+
+        root, truth = big_corpus(n=600)
+        (root / "run.yml").write_text(
+            (root / "run.yml").read_text()
+            + "produced_by:\n  model: m\n  prompt_version: p7\n",
+            encoding="utf-8",
+        )
+        config = dataclasses.replace(load_run(root / "run.yml"), budget=Budget(None, False))
+        result = run(
+            config, out=tmp_path / "out", provider_factory=lambda spec: oracle_judge(truth)
+        )
+
+        # The prompt moved between the run and the re-analysis. A curve
+        # fitted on p7 does not describe p8.
+        (root / "run.yml").write_text(
+            (root / "run.yml").read_text().replace("p7", "p8"), encoding="utf-8"
+        )
+        with pytest.raises(StaleCalibration, match="Refit it"):
+            analyse_run(result.directory)
+
+
+class TestOperatingPoint:
+    def test_the_table_scores_the_judge_against_every_baseline(self, big, tmp_path):
+        config, provider, _ = big(n=600)
+        result = run(config, out=tmp_path / "out", provider_factory=lambda spec: provider)
+        table = result.metrics["triage_eval"]
+        names = {entry["strategy"] for entry in table["strategies"]}
+        assert {"random", "output_length", "majority_label"} <= names
+        assert table["target_errors"] > 0
+
+    def test_a_good_judge_beats_random_at_every_budget(self, big, tmp_path):
+        config, provider, _ = big(n=600, catches=0.9, false_alarms=0.02)
+        result = run(config, out=tmp_path / "out", provider_factory=lambda spec: provider)
+        entries = {e["strategy"]: e for e in result.metrics["triage_eval"]["strategies"]}
+        judge = next(e for e in entries.values() if not e["baseline"])
+        for judge_point, random_point in zip(
+            judge["points"], entries["random"]["points"], strict=True
+        ):
+            assert judge_point["error_recall"] >= random_point["error_recall"]
+
+    def test_the_report_leads_the_table_with_what_it_cost(self, big, tmp_path):
+        config, provider, _ = big(n=600)
+        report = run(
+            config, out=tmp_path / "out", provider_factory=lambda spec: provider
+        ).report
+        assert "OPERATING POINT" in report
+        assert "Error Recall@Budget" in report
+        assert "wasted" in report
+
+    def test_without_labels_there_is_no_table_and_the_report_says_why(
+        self, project, scripted, no_confirm, tmp_path
+    ):
+        config = no_confirm(load_run(project()))
+        result = run(config, out=tmp_path / "out", provider_factory=lambda spec: scripted())
+        assert not result.metrics["triage_eval"]
+        assert "Error Recall@Budget counts true errors" in result.report
+
+    def test_a_degenerate_target_refuses_the_recall_table_too(
+        self, example, provider, tmp_path
+    ):
+        # Gate 2 refuses an AUC on five errors in thirteen items. A recall
+        # curve off the same rows is no better founded, and it is the more
+        # persuasive of the two — so the same floor governs both.
+        result = run(
+            example, out=tmp_path / "out", provider_factory=lambda spec: provider
+        )
+        table = result.metrics["triage_eval"]
+        assert table.get("skipped")
+        assert "floor is 30" in table["skipped"]
+        assert "strategies" not in table
+        assert "OPERATING POINT" in result.report

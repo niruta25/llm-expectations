@@ -34,9 +34,11 @@ class TestEndToEnd:
     def test_the_run_writes_every_file_the_design_names(self, example, provider, tmp_path):
         result = execute(example, tmp_path / "out", provider)
         written = {path.name for path in result.directory.iterdir()}
+        # Every file DESIGN.md §3 names. calibration.json and
+        # triage_eval.json are mode 1, and the example carries labels.
         assert written == {
-            "verdicts.jsonl", "findings.jsonl", "risk.jsonl",
-            "metrics.json", "run.json", "report.md",
+            "verdicts.jsonl", "findings.jsonl", "risk.jsonl", "metrics.json",
+            "run.json", "report.md", "calibration.json", "triage_eval.json",
         }
         assert (tmp_path / "out" / "index.jsonl").exists()
 

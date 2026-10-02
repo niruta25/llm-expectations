@@ -27,14 +27,16 @@ against. This tool covers those two kinds of field — **assigned** labels and
 
 ## Status
 
-**Pre-alpha.** Both gates work, and human answers now grade the model *and*
-the judges scoring it.
+**Pre-alpha, and feature-complete for assigned labels.** Both gates, human
+answers grading the model and its judges, a fitted calibration, and the
+operating-point table a review budget actually needs.
 
 ```bash
 llm-expectations check examples/jtbd/taxonomy.yml   # static health, no data
 llm-expectations plan  examples/jtbd/run.yml        # what it will cost, no calls
 llm-expectations run   examples/jtbd/run.yml        # collect and analyse
 llm-expectations analyse out/<run>/                 # re-analyse from cache, free
+llm-expectations triage-eval out/<run>/             # the table alone, free
 ```
 
 ```
@@ -43,36 +45,31 @@ llm-expectations analyse out/<run>/                 # re-analyse from cache, fre
   │  ✓ judge beats baselines      PASS                                  │
   └─────────────────────────────────────────────────────────────────────┘
 
-    strategy                 AUC  95% interval           n
-    raw_confidence          0.99  [0.99, 1.00]         400  ← the judge
-    random                  0.49  [0.41, 0.56]         400  ← baseline
-    output_length           0.50  [0.50, 0.50]         400  ← baseline
+  CALIBRATION
+    jtbd         n=1200   ECE 0.002 ✓   Brier 0.057 vs 0.145 base rate
+      quality measured out of fold over 5 folds
 
-  vs humans   400 labelled items
-    macro F1                      0.91   the headline
-    accuracy                     89.2%   ✓   majority-label baseline 18.2%
-    exact / right parent / too shallow / wrong
-    89% / 4% / 4% / 2%
-    confusable pairs
-      billing.card_declined → billing.payment_failed
-        5 this way, 5 back — symmetric
-        neither direction dominates — fix the taxonomy
-    two annotators             95.0% agree over 120 double-labelled items
-      billing.card_declined ↔ billing.payment_failed
-        6 of 6 disagreements (100%)
-      your annotators cannot separate these two either.
+  OPERATING POINT   Error Recall@Budget
+    312 known errors in 1200 labelled items
+
+    strategy             budget  reviewed   found   recall   wasted
+    calibrated_risk       1.0%        12       8     2.6%    31.6%  ← the judge
+    calibrated_risk      20.0%       240     164    52.6%    31.6%
+    panel_disagreement    1.0%        12       7     2.3%    39.2%
+    random                1.0%        12       3     1.0%    75.0%
 ```
 
-Every number carries what it has to beat. Accuracy never appears without the
-majority-label baseline; a ranking never appears without random and output
-length; a judge's accuracy never appears without "approve everything". Four
-tree buckets say *which kind* of wrong, because a sibling, a hedge and a
-misread need three different fixes. Confusion that runs both ways is a
-taxonomy bug; confusion that runs one way is a prompt bug.
+Every number carries what it has to beat, and nothing claims more than it
+earned. Calibration quality is measured **out of fold** — fitting on a
+hundred rows and reporting how well the fit scores those same hundred rows is
+in-sample performance wearing a lab coat. A calibration fitted against one
+prompt version refuses to be reused against another. And because a Platt
+curve is monotone, the report says plainly when a calibration bought you
+meaningful probabilities but *not* a better ordering.
 
 A worked project with deliberately planted defects lives in
-[`examples/jtbd/`][example]; at thirteen items it correctly *fails* Gate 2,
-which is what a fixture that size should do.
+[`examples/jtbd/`][example]; at thirteen items it correctly *fails* Gate 2 and
+fits no calibration, which is what a fixture that size should do.
 
 [example]: https://github.com/niruta25/llm-expectations/tree/main/examples/jtbd
 
@@ -117,8 +114,8 @@ which is what a fixture that size should do.
 | M2 | free checks + full report | done |
 | M3 | panel | done |
 | M4 | guardrails + stats | done — shippable |
-| M5 | labels (Mode 1) | **done** |
-| M5b | calibration + triage evaluation | shippable |
+| M5 | labels (Mode 1) | done |
+| M5b | calibration + triage evaluation | **done** — shippable |
 | M6 | free text | shippable |
 | M7 | across runs | |
 | M8 | polish | |

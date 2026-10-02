@@ -19,6 +19,7 @@ from .base import TriageContext, TriageStrategy, assert_no_labels
 __all__ = [
     "BASELINES",
     "STRATEGIES",
+    "CalibratedRiskStrategy",
     "MajorityLabelStrategy",
     "OutputLengthStrategy",
     "PanelDisagreementStrategy",
@@ -181,10 +182,43 @@ class PanelDisagreementStrategy:
         return scores
 
 
+@dataclass(frozen=True, slots=True)
+class CalibratedRiskStrategy:
+    """Rank by fitted probability of error. The default once one exists.
+
+    Mechanically close to ``raw_confidence`` — both take the worst field of
+    an item — and that closeness is the honest story. A single Platt curve is
+    monotone, so it cannot reorder anything; it is the per-field curves that
+    can, because a raw 0.7 on one field is not a raw 0.7 on another.
+
+    What the calibration always buys is meaning. ``raw_confidence`` gives you
+    an order and nothing else; this gives you numbers you can set a review
+    threshold against.
+    """
+
+    id: str = "calibrated_risk"
+    requires: frozenset[str] = frozenset({"verdicts", "calibration"})
+
+    def rank(self, ctx: TriageContext) -> Mapping[str, float | None]:
+        assert_no_labels(ctx)
+        scores: dict[str, float | None] = {}
+        for item_id in ctx.items():
+            values = [
+                p
+                for p in (
+                    ctx.calibrator.error_probability(v) for v in ctx.verdicts.get(item_id, ())
+                )
+                if p is not None
+            ]
+            scores[item_id] = max(values) if values else None
+        return scores
+
+
 STRATEGIES: Mapping[str, TriageStrategy] = {
     strategy.id: strategy
     for strategy in (
         RawConfidenceStrategy(),
+        CalibratedRiskStrategy(),
         RandomStrategy(),
         OutputLengthStrategy(),
         MajorityLabelStrategy(),
@@ -214,10 +248,14 @@ def resolve_strategy(requested: str, *, calibrated: bool) -> TriageStrategy:
         requested = "calibrated_risk" if calibrated else "raw_confidence"
     strategy = STRATEGIES.get(requested)
     if strategy is None:
-        arriving = {"calibrated_risk": "M5b, with the Platt fit"}.get(requested)
-        detail = f" It arrives at {arriving}." if arriving else ""
         raise ValueError(
-            f"triage strategy {requested!r} is not available yet.{detail} "
-            f"Available now: {', '.join(sorted(STRATEGIES))}."
+            f"unknown triage strategy {requested!r}. "
+            f"Available: {', '.join(sorted(STRATEGIES))}."
+        )
+    if requested == "calibrated_risk" and not calibrated:
+        raise ValueError(
+            "strategy 'calibrated_risk' needs a fitted calibration and none was "
+            "produced — too few labelled rows, or the fit did not converge. Use 'auto', "
+            "which falls back to raw_confidence and stamps the ranking uncalibrated."
         )
     return strategy

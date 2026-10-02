@@ -15,8 +15,14 @@ Underneath: the free checks, a triage judge that ranks what a human should
 open first, and a panel that measures over a sample. A guardrail that fires
 withholds the numbers it invalidates and names them.
 
-That is M0 through M5 (DESIGN.md §12). The fitted calibration and the
-operating-point table arrive at M5b.
+And the triage score is finally allowed to be called calibrated. A Platt
+curve per field maps raw confidence onto observed error rates, its quality is
+measured out of fold, and Error Recall@Budget answers the question a review
+budget actually poses — how many of the errors does opening the first 1%
+actually find — for the judge and every baseline at once.
+
+That is M0 through M5b (DESIGN.md §12), and the library now does what it was
+designed to do. Free text arrives at M6 and cross-run comparison at M7.
 
   - assigned fields   a label chosen from a versioned taxonomy
   - free text fields  a sentence written about the item
@@ -35,7 +41,12 @@ See https://github.com/niruta25/llm-expectations
 
 from __future__ import annotations
 
-from .calibration import Calibrator, IdentityCalibrator
+from .calibration import (
+    Calibrator,
+    FieldCalibrator,
+    IdentityCalibrator,
+    PlattCalibrator,
+)
 from .checks import CheckContext, run_checks
 from .config import ConfigError, RunConfig, Settings, load_run
 from .gates import Gate, Gates, Suppression, gate_one, gate_two
@@ -50,6 +61,7 @@ from .read import ReadError, index_items, read_items, read_labels, read_outputs
 from .schema import FieldKind, FieldSpec, Schema, SchemaError, TextStyle
 from .taxonomy import Taxonomy, TaxonomyError, check_recorded_hash, load_taxonomy
 from .triage import TriageContext, TriageStrategy
+from .triage.evaluate import error_recall_at_budget
 from .types import (
     ABSTAIN,
     Exclusion,
@@ -76,6 +88,7 @@ __all__ = [
     "ConfigError",
     "Exclusion",
     "FakeProvider",
+    "FieldCalibrator",
     "FieldKind",
     "FieldSpec",
     "Finding",
@@ -92,6 +105,7 @@ __all__ = [
     "LabelCorrectTask",
     "Mode",
     "Output",
+    "PlattCalibrator",
     "ReadError",
     "RiskRow",
     "RunConfig",
@@ -114,6 +128,7 @@ __all__ = [
     "check_recorded_hash",
     "classify",
     "effective_votes",
+    "error_recall_at_budget",
     "gate_one",
     "gate_two",
     "index_items",

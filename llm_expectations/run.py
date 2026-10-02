@@ -22,7 +22,9 @@ from typing import Any, TextIO
 from .budget import BudgetGuard
 from .cache import VerdictCache, cache_key
 from .calibration import IdentityCalibrator
-from .calibration.base import Calibrator
+from .calibration.base import Calibrator, StaleCalibration
+from .calibration.base import fingerprint as calibration_fingerprint
+from .calibration.platt import FieldCalibrator, PlattCalibrator
 from .calibration.quality import reliability
 from .checks import CheckContext, run_checks
 from .checks.corpus import label_shares
@@ -49,6 +51,8 @@ from .report import render
 from .schema import FieldKind, FieldSpec
 from .taxonomy import Taxonomy
 from .triage import TriageContext, build_risk_rows, resolve_strategy
+from .triage.evaluate import compare
+from .triage.strategies import BASELINES, STRATEGIES
 from .types import Finding, Grain, Item, Label, Mode, Output, RiskRow, Status, Verdict
 from .write import (
     append_index,
@@ -767,6 +771,207 @@ def _confidence_pairs(
     return stated, happened
 
 
+def run_fingerprint(config: RunConfig) -> str:
+    """What a calibration fitted on this run would only ever be valid for.
+
+    Judge, model, prompt and taxonomy version. A calibration fitted on
+    prompt p7 tells you nothing about p8 — the judge is answering a
+    different question — and using it anyway is how a number keeps looking
+    trustworthy after the thing under it moved.
+    """
+    triage = config.judges.triage
+    judge_id = triage.judge if triage else ""
+    model = config.judges.judges[judge_id].model if judge_id else ""
+    taxonomies = ",".join(sorted(str(t.ref) for t in config.taxonomies.values()))
+    prompt = config.produced_by.prompt_version if config.produced_by else ""
+    return calibration_fingerprint(
+        judge_id=judge_id,
+        model=model,
+        prompt_hash=prompt,
+        check_id="label_correct",
+        taxonomy_ref=taxonomies,
+    )
+
+
+def check_calibration_age(stored: str | None, current: str, *, where: str) -> None:
+    """Refuse a calibration fitted against something that has since moved."""
+    if stored is None or stored == current:
+        return
+    raise StaleCalibration(
+        f"the calibration in {where} was fitted against a different judge, model, "
+        f"prompt version or taxonomy ({stored} vs {current} now).\n"
+        "  Refit it, or run uncalibrated and say so. A curve fitted on one question "
+        "does not describe the answers to another."
+    )
+
+
+def fit_calibration(
+    config: RunConfig, dataset: Dataset, verdicts: Sequence[Verdict], modes: Mapping[str, Mode]
+) -> tuple[Calibrator, dict[str, Any]]:
+    """Fit one curve per labelled assigned field, plus a shared fallback.
+
+    Returns the calibrator the run will rank with and a report of what was
+    fitted. When nothing could be fitted the identity passthrough comes
+    back, and every number downstream of it stays stamped uncalibrated.
+    """
+    from .metrics.classification import primary_labels
+
+    triage = config.judges.triage
+    if triage is None:
+        return IdentityCalibrator(), {}
+
+    identity = IdentityCalibrator()
+    rows: dict[str, list[tuple[float, bool]]] = {}
+    for verdict in verdicts:
+        if verdict.judge_id != triage.judge:
+            continue
+        score = identity.error_probability(verdict)
+        if score is None:
+            continue
+        truth = primary_labels(dataset.labels, verdict.field).get(verdict.item_id)
+        output = dataset.outputs.get(verdict.item_id)
+        if truth is None or output is None:
+            continue
+        rows.setdefault(verdict.field, []).append(
+            (score, str(output.get(verdict.field)) != truth)
+        )
+
+    stamp = run_fingerprint(config)
+    report: dict[str, Any] = {"fingerprint": stamp, "fields": {}, "fitted": False}
+    calibrator = FieldCalibrator(fingerprint=stamp)
+
+    pooled: list[tuple[float, bool]] = []
+    for name, pairs in sorted(rows.items()):
+        pooled.extend(pairs)
+        if modes.get(name, Mode.NO_LABELS) < Mode.LABELLED:
+            continue
+        fitted = PlattCalibrator()
+        fit = fitted.fit_from_rows(
+            [s for s, _ in pairs], [e for _, e in pairs], fingerprint=stamp
+        )
+        calibrator.per_field[name] = fitted
+        report["fields"][name] = fit.to_dict()
+
+    if pooled and not any(c.is_calibrated for c in calibrator.per_field.values()):
+        fallback = PlattCalibrator()
+        fit = fallback.fit_from_rows(
+            [s for s, _ in pooled], [e for _, e in pooled], fingerprint=stamp
+        )
+        calibrator.fallback = fallback
+        report["fields"]["(all fields pooled)"] = fit.to_dict()
+
+    if not calibrator.is_calibrated:
+        report["why"] = (
+            "nothing was fitted, so the ranking is by raw judge confidence and is "
+            "stamped uncalibrated everywhere it appears."
+        )
+        return IdentityCalibrator(), report
+
+    report["fitted"] = True
+    report["reorders"] = calibrator.reorders
+    report["model"] = calibrator.to_dict()
+    if not calibrator.reorders:
+        report["why"] = (
+            "one curve covers everything, and a Platt curve is monotone — the review "
+            "order is identical to the uncalibrated one. What the calibration buys is "
+            "probabilities that mean what they say, not a better ordering. Two or more "
+            "fields each with enough labelled rows would let it reorder."
+        )
+    usable: Calibrator = calibrator
+    return usable, report
+
+
+def triage_evaluation(
+    config: RunConfig,
+    ctx: TriageContext,
+    strategy_id: str,
+    labels: Sequence[Label],
+    outputs: Mapping[str, Output],
+) -> dict[str, Any]:
+    """Error Recall@Budget for every strategy, on one target.
+
+    The table that settles whether a judge is worth paying for at the budget
+    you actually review at — and whether panel disagreement beats it on your
+    corpus rather than on somebody else's.
+    """
+    from .gates import build_target
+    from .metrics.ranking import degenerate_target
+
+    triage = config.judges.triage
+    if triage is None or not labels:
+        return {}
+    target = build_target(labels, outputs, tuple(config.schema.fields))
+    if not target.truth or not target.positives:
+        return {
+            "skipped": (
+                "no labelled errors to find, so there is no recall to measure"
+                if target.truth
+                else "no human labels, so true errors cannot be counted"
+            )
+        }
+
+    # The same floor that governs Gate 2. A target too thin to support an
+    # AUC is too thin to support a recall curve off the same rows, and a
+    # table that printed anyway would be the more persuasive of the two.
+    reason = degenerate_target(
+        target,
+        min_items=int(config.settings.value("minority_class_min_items")),
+        min_share=float(config.settings.value("minority_class_min_share")),
+    )
+    if reason is not None:
+        return {"skipped": reason}
+
+    wanted = [strategy_id, *(b for b in BASELINES if b != strategy_id)]
+    ranked: dict[str, Mapping[str, float | None]] = {}
+    for name in wanted:
+        strategy = STRATEGIES.get(name)
+        if strategy is None:
+            continue
+        if "panel" in strategy.requires and not ctx.panel_members:
+            continue
+        if "calibration" in strategy.requires and not ctx.calibrator.is_calibrated:
+            continue
+        ranked[name] = strategy.rank(ctx)
+
+    results = compare(
+        ranked,
+        target.truth,
+        triage.budgets,
+        baselines=BASELINES,
+        resamples=int(config.settings.value("bootstrap_resamples")),
+        seed=ctx.seed,
+        min_n=int(config.settings.value("min_n_ranking")),
+    )
+    return {
+        "target_items": len(target.truth),
+        "target_errors": target.positives,
+        "budgets": list(triage.budgets),
+        "strategies": [
+            {
+                "strategy": r.strategy,
+                "baseline": r.is_baseline,
+                "ranked": r.ranked,
+                "unranked": r.unranked,
+                "unranked_errors": r.unranked_errors,
+                "points": [
+                    {
+                        "budget": p.budget,
+                        "n_reviewed": p.n_reviewed,
+                        "errors_found": round(p.errors_found, 2),
+                        "error_recall": p.error_recall,
+                        "precision": p.precision,
+                        "wasted": p.wasted,
+                        "ci_low": p.ci_low,
+                        "ci_high": p.ci_high,
+                    }
+                    for p in r.points
+                ],
+            }
+            for r in results
+        ],
+    }
+
+
 def grain_rates(findings: Sequence[Finding]) -> dict[str, Any]:
     """Pass rates at both grains. The item one is the one a consumer needs.
 
@@ -822,10 +1027,13 @@ def what_this_run_cannot_tell_you(
     health: Sequence[JudgeHealth],
     gates: Gates,
 ) -> list[str]:
-    lines = [
-        "how many errors a review budget would actually find\n"
-        "Error Recall@Budget needs a fitted calibration and labelled rows; M5b",
-    ]
+    lines: list[str] = []
+    if not gates.table:
+        lines.append(
+            "how many errors a review budget would actually find\n"
+            "Error Recall@Budget counts true errors against a target big enough to "
+            "rank on, and this run has neither"
+        )
     if gates.two.skipped:
         lines.insert(0, f"whether this ranking is any better than guessing\n{gates.two.skipped}")
     withheld = gates.suppressed()
@@ -966,6 +1174,17 @@ def analyse_run(directory: Path, *, stream: TextIO | None = None) -> RunResult:
     verdicts = read_verdicts(directory / "verdicts.jsonl")
     # The entry before this run's own, so a re-analysis compares against the
     # same baseline the original run did rather than against itself.
+    stored = directory / "calibration.json"
+    if stored.exists():
+        # The project can move between a run and a re-analysis. A curve
+        # fitted against the old taxonomy or prompt does not describe this
+        # one, and silently reusing it is how a stale number survives.
+        check_calibration_age(
+            json.loads(stored.read_text(encoding="utf-8")).get("fingerprint"),
+            run_fingerprint(config),
+            where=str(stored),
+        )
+
     entries = [e for e in read_index(directory.parent) if e.get("distributions")]
     earlier: dict[str, Any] = next(
         (e for e in reversed(entries) if e.get("run_id") != directory.name), {}
@@ -1022,19 +1241,15 @@ def _analyse(
         *panel_findings,
         *label_findings,
     ]
-    calibrator: Calibrator = IdentityCalibrator()
+    calibrator, calibration = fit_calibration(config, dataset, verdicts, modes)
     risk_rows, strategy_id = build_triage(config, dataset, verdicts, calibrator)
+    scoring = scoring_context(config, dataset, verdicts, calibrator)
+    triage_eval = triage_evaluation(config, scoring, strategy_id, dataset.labels, dataset.outputs)
 
     gate1 = gate_one(
         config, judge_health=health, items=len(dataset.items), verdicts=verdicts, panel=panel
     )
-    gate2 = gate_two(
-        config,
-        scoring_context(config, dataset, verdicts, calibrator),
-        strategy_id,
-        dataset.labels,
-        dataset.outputs,
-    )
+    gate2 = gate_two(config, scoring, strategy_id, dataset.labels, dataset.outputs)
     gates = Gates(
         one=gate1,
         two=gate2.gate,
@@ -1094,6 +1309,8 @@ def _analyse(
         ],
         "panel": panel,
         "vs_humans": humans,
+        "calibration": calibration,
+        "triage_eval": triage_eval,
         "gates": {
             "measurement_sound": {
                 "status": gates.one.status,
@@ -1144,6 +1361,8 @@ def _analyse(
         skipped=skipped,
         panel=panel,
         humans=humans,
+        calibration=calibration,
+        triage_eval=triage_eval,
         gates=gates,
         risk_rows=risk_rows,
         verdicts=verdicts,
@@ -1153,6 +1372,10 @@ def _analyse(
         exclusions=dataset.exclusions,
     )
 
+    if calibration:
+        write_json(directory / "calibration.json", calibration)
+    if triage_eval:
+        write_json(directory / "triage_eval.json", triage_eval)
     write_jsonl(directory / "findings.jsonl", (finding_row(f) for f in findings))
     write_jsonl(directory / "risk.jsonl", (risk_row(r) for r in risk_rows))
     write_json(directory / "metrics.json", metrics)

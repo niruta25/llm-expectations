@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .calibration.base import StaleCalibration
 from .config import ConfigError, RunConfig
 from .read import ReadError
 from .taxonomy import TaxonomyError, load_taxonomy
@@ -45,6 +46,11 @@ def _parser() -> argparse.ArgumentParser:
     analyse = sub.add_parser("analyse", help="re-analyse a finished run from cache, free")
     analyse.add_argument("directory", type=Path, help="a run directory under out/")
 
+    evaluate = sub.add_parser(
+        "triage-eval", help="Error Recall@Budget per strategy, from a finished run"
+    )
+    evaluate.add_argument("directory", type=Path, help="a run directory under out/")
+
     check = sub.add_parser("check", help="static health check on a taxonomy file")
     check.add_argument("taxonomy", type=Path)
 
@@ -64,13 +70,15 @@ def main(argv: list[str] | None = None) -> int:
             return _plan(args)
         if args.command == "analyse":
             return _analyse(args)
+        if args.command == "triage-eval":
+            return _triage_eval(args)
         if args.command == "check":
             return _check(args)
         if args.command == "compare":
             print("compare arrives at M7. Until then, two run directories under out/ hold")
             print("everything it will read — nothing needs re-collecting.")
             return 1
-    except (ConfigError, ReadError, TaxonomyError) as exc:
+    except (ConfigError, ReadError, TaxonomyError, StaleCalibration) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -130,6 +138,27 @@ def _analyse(args: argparse.Namespace) -> int:
     result = analyse_run(args.directory)
     print(result.report)
     print("  re-analysed from cache. Zero model calls, zero cost.")
+    return 0
+
+
+def _triage_eval(args: argparse.Namespace) -> int:
+    """The comparison table alone, from disk. Zero model calls."""
+    import json
+
+    from .report import operating_point_table
+
+    path = Path(args.directory) / "triage_eval.json"
+    if not path.exists():
+        print(
+            f"no triage_eval.json in {args.directory}. It is written when a run has "
+            "human labels — without them true errors cannot be counted.",
+            file=sys.stderr,
+        )
+        return 2
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for line in operating_point_table(payload):
+        print(line)
+    print("  Read from disk. Zero model calls, zero cost.")
     return 0
 
 
