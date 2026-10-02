@@ -28,7 +28,14 @@ they genuinely gate the one expensive check: a judge that splits the text into
 claims and says which the item does not support. An audit sample measures what
 that gate misses instead of assuming it misses nothing.
 
-That is M0 through M6 (DESIGN.md §12). Cross-run comparison arrives at M7.
+And runs can be set against each other: ``compare`` lines two up, names the
+labels that moved and the items that improved or regressed — and refuses to
+say which run is better, because most items tie in a real A/B and a net delta
+without a test is how underpowered changes get shipped. Two runs on different
+taxonomy versions refuse to compare at all without a migration mapping.
+
+That is M0 through M7 (DESIGN.md §12) — every build milestone. What remains is
+polish, and the v1 list in §13.
 
   - assigned fields   a label chosen from a versioned taxonomy
   - free text fields  a sentence written about the item
@@ -54,6 +61,7 @@ from .calibration import (
     PlattCalibrator,
 )
 from .checks import CheckContext, run_checks
+from .compare import ComparisonError, compare_runs, load_run_directory
 from .config import ConfigError, RunConfig, Settings, load_run
 from .gates import Gate, Gates, Suppression, gate_one, gate_two
 from .judges import ClaimSupportTask, Judge, JudgeError, LabelCorrectTask
@@ -90,6 +98,7 @@ __all__ = [
     "AgreementReport",
     "Calibrator",
     "CheckContext",
+    "ComparisonError",
     "ClaimSupportTask",
     "Classification",
     "ConfigError",
@@ -133,6 +142,7 @@ __all__ = [
     "auc",
     "bootstrap_ci",
     "check_recorded_hash",
+    "compare_runs",
     "classify",
     "effective_votes",
     "error_recall_at_budget",
@@ -140,6 +150,7 @@ __all__ = [
     "gate_two",
     "index_items",
     "load_run",
+    "load_run_directory",
     "load_taxonomy",
     "plan_run",
     "read_items",

@@ -28,12 +28,14 @@ from .types import ABSTAIN, Severity
 
 __all__ = [
     "HealthIssue",
+    "Migration",
     "Taxonomy",
     "TaxonomyChangedError",
     "TaxonomyError",
     "TaxonomyNode",
     "TaxonomyRef",
     "check_recorded_hash",
+    "load_migration",
     "load_taxonomy",
     "parse_ref",
 ]
@@ -450,4 +452,103 @@ def check_recorded_hash(taxonomy: Taxonomy, recorded: Mapping[str, str]) -> None
         f"  Recorded hash: {previous[:8]}...   Current: {taxonomy.content_hash[:8]}...\n"
         f"  Bump to v{taxonomy.version + 1}, or restore the file.\n"
         "  Comparing runs across a silent definition change is the failure this stops."
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Migration:
+    """How the labels of one taxonomy version map onto another's.
+
+    Without one, two runs on different versions cannot be compared and the
+    library refuses rather than lining up labels by name and hoping. A label
+    that was renamed, or two that were merged, would otherwise read as a
+    distribution that moved — the model's behaviour blamed for an edit to the
+    taxonomy.
+
+    ``None`` on the right-hand side means the label has no equivalent. Those
+    items are excluded from any comparison and counted, because silently
+    dropping them is how a distribution shift gets manufactured.
+    """
+
+    source: TaxonomyRef
+    target: TaxonomyRef
+    mapping: Mapping[str, str | None]
+    path: Path | None = None
+
+    def covers(self, taxonomy: Taxonomy) -> tuple[str, ...]:
+        """Labels of the source version this mapping says nothing about."""
+        return tuple(sorted(set(taxonomy.nodes) - set(self.mapping)))
+
+    def translate(self, label: str) -> str | None:
+        return self.mapping.get(label)
+
+    @property
+    def dropped(self) -> tuple[str, ...]:
+        return tuple(sorted(k for k, v in self.mapping.items() if v is None))
+
+    @property
+    def merged(self) -> dict[str, tuple[str, ...]]:
+        """Targets that more than one source label now maps onto."""
+        reverse: dict[str, list[str]] = {}
+        for old, new in self.mapping.items():
+            if new is not None:
+                reverse.setdefault(new, []).append(old)
+        return {k: tuple(sorted(v)) for k, v in sorted(reverse.items()) if len(v) > 1}
+
+
+def load_migration(path: str | Path) -> Migration:
+    """Read a migration file.
+
+    The file names its own endpoints, so a mapping cannot be applied between
+    the wrong pair of versions by accident::
+
+        from: jtbd@v4
+        to: jtbd@v5
+        labels:
+          billing.payment_failed: billing.charge_failed   # renamed
+          billing.card_declined:  billing.charge_failed   # merged
+          billing.refund_request: null                    # no equivalent
+    """
+    path = Path(path)
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise TaxonomyError(f"no migration file at {path}") from None
+    except yaml.YAMLError as exc:
+        raise TaxonomyError(f"{path} is not valid YAML: {exc}") from None
+
+    if not isinstance(raw, Mapping):
+        raise TaxonomyError(f"{path} must be a mapping with 'from', 'to' and 'labels'")
+    unknown = set(raw) - {"from", "to", "labels"}
+    if unknown:
+        raise TaxonomyError(f"{path}: unknown key(s) {sorted(unknown)}")
+
+    for key in ("from", "to"):
+        if not isinstance(raw.get(key), str):
+            raise TaxonomyError(
+                f"{path}: '{key}' is required and names a version, e.g. 'jtbd@v4'. A "
+                "mapping that does not say which versions it joins can be applied "
+                "between the wrong pair without anyone noticing."
+            )
+
+    labels = raw.get("labels")
+    if not isinstance(labels, Mapping) or not labels:
+        raise TaxonomyError(f"{path}: 'labels' is required and must be a non-empty mapping")
+
+    mapping: dict[str, str | None] = {}
+    for old, new in labels.items():
+        if not isinstance(old, str):
+            raise TaxonomyError(f"{path}: label key {old!r} must be a string")
+        if new is not None and not isinstance(new, str):
+            raise TaxonomyError(
+                f"{path}: {old!r} maps to {new!r}. Use a label name, or null for a label "
+                "with no equivalent."
+            )
+        mapping[old] = new
+
+    return Migration(
+        source=parse_ref(str(raw["from"])),
+        target=parse_ref(str(raw["to"])),
+        mapping=mapping,
+        path=path,
     )

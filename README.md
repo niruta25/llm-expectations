@@ -27,9 +27,10 @@ against. This tool covers those two kinds of field — **assigned** labels and
 
 ## Status
 
-**Pre-alpha, and covering both kinds of field.** Both gates, human answers
-grading the model and its judges, a fitted calibration, the operating-point
-table a review budget needs, and free text.
+**Pre-alpha, and every build milestone is in.** Both gates, free checks on
+both kinds of field, a panel, human answers grading the model and its judges,
+a fitted calibration, the operating-point table a review budget needs, and
+runs set against each other.
 
 ```bash
 llm-expectations check examples/jtbd/taxonomy.yml   # static health, no data
@@ -37,43 +38,41 @@ llm-expectations plan  examples/jtbd/run.yml        # what it will cost, no call
 llm-expectations run   examples/jtbd/run.yml        # collect and analyse
 llm-expectations analyse out/<run>/                 # re-analyse from cache, free
 llm-expectations triage-eval out/<run>/             # the table alone, free
+llm-expectations compare out/a out/b                # two runs, head to head
 ```
 
 ```
-  ── summary ────────────────────────────────── free_text · descriptive ──
+  A  2026-10-02_0747_jtbd-p7              400 items   prompt p7
+  B  2026-10-02_0747_jtbd-p8              400 items   prompt p8
 
-  free checks
-    length in bounds              100.0%   ✓
-    specific, not filler           92.3%   ✗  1 of 13 failed
-      s-11     nothing here is specific to this item
-    copy ratio                     92.3%   ✗  1 of 13 failed
-      s-13     28 of 28 words are one lifted run
-    boilerplate                    0 of 13   ✓  near-identical
-    agrees with other fields       81.8%   ✗  2 of 11 failed
+  ⚠ the prompt changed, p7 → p8. That is what a comparison is for; it also
+    means every difference below has more than one possible cause.
 
-  judge
-    claims the item supports       92.3%   ✗  1 of 13 failed
-      s-10     1 invented: 'we issued a refund of $49'
+                                      A        B     change
+    macro F1                       0.71     0.89      +0.18
+    accuracy                      71.0%    89.2%    +18.2pp
 
-  FREE-TEXT GATE
-    summary                3 flagged by a free check, 10 audited
-    of the flagged rows       33% had an unsupported claim
-    1 of 10 audited rows that no free check flagged turned out to have an
-    unsupported claim. That is what the free gate is missing, measured
-    rather than assumed.
+    items that moved          400 shared
+      improved                   107
+      regressed                   34
+      unchanged                  259
+
+  ┌ WHAT THIS COMPARISON CANNOT TELL YOU ──────────────────────────────────┐
+  │  ✗ whether jtbd actually got better or worse
+  │      A net +73 is not a result without a test over the items that
+  │      actually differ — most items tie in a real A/B, and quoting a win
+  │      rate without one is how underpowered changes get shipped.
+  └────────────────────────────────────────────────────────────────────────┘
 ```
 
-Free text is **cheaper** than assigned, which is the opposite of what you
-would guess. The assigned free checks catch format problems, so a
-well-formed wrong label sails through and the judge has to see everything.
-The free-text checks catch *content* problems, so they genuinely gate the
-expensive call — and the audit sample measures what the gate misses instead
-of assuming it misses nothing.
+**`compare` will not tell you which run is better**, and that refusal is the
+point. Two runs on different taxonomy versions refuse to compare at all
+without a migration mapping — lining labels up by name across a rename reads
+an edit you made as a distribution the model shifted.
 
-Every number carries what it has to beat, and nothing claims more than it
-earned. Calibration quality is measured out of fold. A calibration fitted
-against one prompt version refuses to be reused against another. A wide
-interval is reported as no result rather than hidden.
+Every number carries what it has to beat. Calibration quality is measured out
+of fold. A calibration fitted against one prompt version refuses to be reused
+against another. A wide interval is reported as no result rather than hidden.
 
 A worked project with eight deliberately planted defects lives in
 [`examples/jtbd/`][example]; at thirteen items it correctly *fails* Gate 2 and
@@ -124,9 +123,9 @@ fits no calibration, which is what a fixture that size should do.
 | M4 | guardrails + stats | done — shippable |
 | M5 | labels (Mode 1) | done |
 | M5b | calibration + triage evaluation | done — shippable |
-| M6 | free text | **done** — shippable |
-| M7 | across runs | |
-| M8 | polish | |
+| M6 | free text | done — shippable |
+| M7 | across runs | **done** |
+| M8 | polish, docs, worked example | |
 
 ## License
 

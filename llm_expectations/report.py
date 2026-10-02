@@ -26,7 +26,7 @@ from .schema import Schema
 from .taxonomy import Taxonomy
 from .types import Finding, Grain, Item, Mode, RiskRow, Severity, Status, Verdict
 
-__all__ = ["operating_point_table", "render"]
+__all__ = ["comparison_report", "operating_point_table", "render"]
 
 REVIEW_PREVIEW = 10
 EVIDENCE_PREVIEW = 4
@@ -77,6 +77,7 @@ def render(
     panel: Mapping[str, Any],
     humans: Mapping[str, Any],
     free_text_gate: Mapping[str, Any],
+    stability: Mapping[str, Any],
     calibration: Mapping[str, Any],
     triage_eval: Mapping[str, Any],
     gates: Gates,
@@ -100,6 +101,7 @@ def render(
         out += _vs_humans((humans.get("fields") or {}).get(name), name)
     out += _judges_vs_humans(humans.get("judges") or [])
 
+    out += _stability(stability)
     out += _free_text_gate(free_text_gate)
     out += _calibration(calibration)
     out += operating_point_table(triage_eval)
@@ -703,6 +705,35 @@ def _maybe(value: float | None, places: int = 2) -> str:
     return "—" if value is None else f"{value:.{places}f}"
 
 
+def _stability(stability: Mapping[str, Any]) -> list[str]:
+    """Serving stability and decision stability, never blended into one."""
+    if not stability or not stability.get("fields"):
+        return []
+    kind = stability["kind"]
+    heading = "SERVING STABILITY" if kind == "serving" else "DECISION STABILITY"
+    lines = [
+        f"  {heading}",
+        f"    {stability['runs']} generations at temperature {stability['temperature']} "
+        f"over {stability['sampled']} sampled items",
+    ]
+    if kind == "serving":
+        lines.append("    expect ~100% — a deterministic request should answer once")
+    for row in stability["fields"]:
+        if row["stability"] is None:
+            continue
+        lines.append(
+            f"    {row['field']:<22} {row['stability']:>7.1%}   {row['agreed']} of "
+            f"{row['compared']} agreed"
+        )
+        for flip in row["flipped"][:2]:
+            lines.append(f"      {flip['item_id']:<8} {' / '.join(flip['answers'])[:52]}")
+    if stability.get("reads_as_broken"):
+        lines += _wrapped(str(stability["reads_as_broken"]), indent=4)
+    if stability.get("note"):
+        lines += _wrapped(str(stability["note"]), indent=4)
+    return lines + [""]
+
+
 def _free_text_gate(gate: Mapping[str, Any]) -> list[str]:
     """What the free checks saved, and what they cost in missed defects."""
     if not gate or not gate.get("fields"):
@@ -862,10 +893,11 @@ def _review(
     return lines
 
 
-def _cannot(cannot_tell: Sequence[str]) -> list[str]:
+def _cannot(cannot_tell: Sequence[str], *, subject: str = "RUN") -> list[str]:
     if not cannot_tell:
         return []
-    lines = ["  ┌ WHAT THIS RUN CANNOT TELL YOU " + "─" * 41 + "┐"]
+    title = f"  ┌ WHAT THIS {subject} CANNOT TELL YOU "
+    lines = [title + "─" * max(3, RULE + 2 - len(title)) + "┐"]
     for line in cannot_tell:
         head, _, tail = line.partition("\n")
         lines.append(f"  │  ✗ {head}")
@@ -908,3 +940,75 @@ def _reasons(verdicts: Sequence[Verdict], *, ranked_by: str = "") -> dict[str, s
         if current is None or score < current[0]:
             worst[verdict.item_id] = (score, f"{verdict.field}: {verdict.reason}")
     return {item_id: reason for item_id, (_, reason) in worst.items()}
+
+
+def comparison_report(comparison: Any) -> list[str]:
+    """Two runs side by side, and the conclusion this command will not draw."""
+    a, b = comparison.a, comparison.b
+    lines = [
+        "llm-expectations compare",
+        "",
+        f"  A  {a.run_id:<32} {a.items:>7,} items   prompt {a.prompt or '—'}",
+        f"  B  {b.run_id:<32} {b.items:>7,} items   prompt {b.prompt or '—'}",
+        "",
+    ]
+    for note in comparison.notes:
+        lines.append("  ⚠ " + _wrapped(note, indent=0)[0])
+        lines += [f"    {line}" for line in _wrapped(note, indent=0)[1:]]
+    if comparison.notes:
+        lines.append("")
+
+    for entry in comparison.fields:
+        header = f"  ── {entry.field} "
+        lines.append(header + "─" * max(3, RULE - len(header)))
+        lines.append("")
+        if entry.deltas:
+            lines.append(f"    {'':<26}{'A':>9}{'B':>9}{'change':>11}")
+        for delta in entry.deltas:
+            lines.append(
+                f"    {delta.name:<26}{_cell(delta.before, delta.kind):>9}"
+                f"{_cell(delta.after, delta.kind):>9}{_change(delta):>11}"
+            )
+        if entry.deltas:
+            lines.append("")
+
+        if entry.moved_labels:
+            lines.append("    labels that moved")
+            for label, move in entry.moved_labels:
+                if abs(move) < 0.0001:
+                    continue
+                lines.append(f"      {label:<36} {move * 100:+.1f}pp")
+            lines.append("")
+
+        if entry.compared:
+            lines.append(f"    items that moved          {entry.compared:,} shared")
+            lines.append(f"      improved                {len(entry.improved):>6,}")
+            lines.append(f"      regressed               {len(entry.regressed):>6,}")
+            lines.append(f"      unchanged               {entry.unchanged:>6,}")
+            if entry.only_in_a or entry.only_in_b:
+                lines.append(
+                    f"      only in one run         {entry.only_in_a:,} in A, "
+                    f"{entry.only_in_b:,} in B — not compared"
+                )
+            if entry.untranslatable:
+                lines.append(
+                    f"      no equivalent label     {entry.untranslatable} excluded by "
+                    "the migration"
+                )
+            lines.append("")
+
+    lines += _cannot(comparison.cannot_tell, subject="COMPARISON")
+    return lines
+
+
+def _cell(value: float | None, kind: str) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.1%}" if kind == "share" else f"{value:.2f}"
+
+
+def _change(delta: Any) -> str:
+    change = delta.change
+    if change is None:
+        return "—"
+    return f"{change * 100:+.1f}pp" if delta.kind == "share" else f"{change:+.2f}"
