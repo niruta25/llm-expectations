@@ -23,9 +23,23 @@ expected.yml   what is planted, and what must catch it
 
 Thirteen items is far below every sample floor in the library, and that is
 deliberate. A fixture this size proves that checks fire on the right rows; it
-proves nothing about whether a metric means anything, and the guardrails should
-say so rather than printing a macro F1 off thirteen rows. If this example ever
-reports a confident ranking number, that is a bug in the guardrails.
+proves nothing about whether a metric means anything.
+
+So **this example fails Gate 2, on purpose**. Five errors in thirteen labelled
+items is a degenerate target, the gate refuses to compute an AUC on it, and
+the report lists what it withheld:
+
+```
+  ┌ GATES ─────────────────────────────────────────────────────────────┐
+  │  ✓ measurement is sound       PASS                                  │
+  │  ✗ judge beats baselines      STOP                                  │
+  └─────────────────────────────────────────────────────────────────────┘
+    ✗ only 5 errors in 13 labelled items (38.5%) — the floor is 30 and 5%.
+```
+
+If this example ever reports a confident ranking number, that is a bug in the
+guardrails. Tests that need a corpus Gate 2 can actually run on build one —
+see the `big_corpus` fixture in `tests/conftest.py`.
 
 ## What lands here today
 

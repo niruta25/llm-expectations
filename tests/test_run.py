@@ -26,16 +26,6 @@ FIXTURE_SCRIPT = (
 )
 
 
-@pytest.fixture
-def example(no_confirm):
-    return no_confirm(load_run(EXAMPLE / "run.yml"), max_usd=5.0)
-
-
-@pytest.fixture
-def provider(scripted):
-    return scripted(rules=FIXTURE_SCRIPT, default=reply(True, 0.92, "the label matches"))
-
-
 def execute(config, out, provider, **kwargs):
     return run(config, out=out, provider_factory=lambda spec: provider, **kwargs)
 
@@ -96,8 +86,8 @@ class TestEndToEnd:
 
     def test_the_report_says_what_it_cannot_conclude(self, example, provider, tmp_path):
         report = execute(example, tmp_path / "out", provider).report
-        assert "better than guessing" in report
         assert "Error Recall@Budget" in report
+        assert "withheld" in report
         # And it is specific about free text rather than claiming the field is
         # untouched — cross-field agreement does read it.
         assert "invented anything, or is filler" in report
@@ -463,3 +453,43 @@ class TestPanel:
             stripped, out=tmp_path / "out", provider_factory=lambda spec: provider
         ).report
         assert "no panel is wired" in report
+
+
+class TestFindingsAreNotPooledAcrossJudges:
+    """One judge's verdicts decide `label_correct`; the panel has its own check."""
+
+    def test_the_rate_is_per_item_not_per_verdict(self, example, tmp_path, scripted):
+        from llm_expectations.judges.fake import reply
+
+        result = run(
+            example,
+            out=tmp_path / "out",
+            provider_factory=lambda spec: scripted(default=reply(True, 0.9, "fine")),
+        )
+        per_field: dict[str, set[str]] = {}
+        for found in result.findings:
+            if found.check == "label_correct":
+                key = (found.item_id, found.field)
+                assert key not in per_field.setdefault(str(found.field), set())
+                per_field[str(found.field)].add(key)
+
+    def test_a_rubber_stamp_on_the_panel_cannot_lift_the_judge_rate(
+        self, example, tmp_path, scripted
+    ):
+        from llm_expectations.judges.fake import FakeProvider, reply
+
+        strict = FakeProvider(model="strict", default=reply(False, 0.9, "wrong"))
+        soft = FakeProvider(model="soft", default=reply(True, 0.95, "fine"))
+        by_id = {"judge-a": strict, "judge-b": soft, "judge-c": soft}
+        result = run(
+            example, out=tmp_path / "out", provider_factory=lambda spec: by_id[spec.id]
+        )
+        scored = [
+            f
+            for f in result.findings
+            if f.check == "label_correct" and f.status is not Status.UNSCORED
+        ]
+        # judge-a rejected everything it was asked. Two lenient panel members
+        # must not drag that towards a pass.
+        assert scored
+        assert all(f.status is Status.FAIL for f in scored)

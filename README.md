@@ -27,7 +27,8 @@ against. This tool covers those two kinds of field — **assigned** labels and
 
 ## Status
 
-**Pre-alpha.** The free checks, a triage judge, and a panel all work.
+**Pre-alpha.** Both gates work, which is the point at which the numbers
+start meaning something.
 
 ```bash
 llm-expectations check examples/jtbd/taxonomy.yml   # static health, no data
@@ -36,22 +37,35 @@ llm-expectations run   examples/jtbd/run.yml        # collect and analyse
 llm-expectations analyse out/<run>/                 # re-analyse from cache, free
 ```
 
-Free, on every row: is the label real, did it stop at a leaf, is the
-abstention rate inside its band, has one label swallowed the batch, did the
-distribution move since the last run, and does each field agree with the
-others.
+```
+  ┌ GATES ─────────────────────────────────────────────────────────────┐
+  │  ✓ measurement is sound       PASS                                  │
+  │  ✓ judge beats baselines      PASS                                  │
+  └─────────────────────────────────────────────────────────────────────┘
 
-Then two jobs that cost money, wired separately. One judge ranks what a human
-should open first, stamped uncalibrated. A panel of two or more measures
-quality over a sample — reporting the vote split rather than an average,
-quoting the dissent, saying how many *effective* votes you actually bought,
-and naming the label boundaries it keeps splitting on. It does not route
-disagreements to review; that ships as a scored baseline at M4 so your own
-corpus settles it.
+    ranked against 79 known errors in 400 labelled items
+    strategy                 AUC  95% interval           n
+    raw_confidence          0.99  [0.99, 1.00]         400  ← the judge
+    random                  0.49  [0.41, 0.56]         400  ← baseline
+    output_length           0.50  [0.50, 0.50]         400  ← baseline
+    majority_label          0.52  [0.48, 0.56]         400  ← baseline
+    panel_disagreement      0.64  [0.58, 0.70]         300  ← baseline
+```
 
-Both grains are reported — an item passes only if every check on it passes —
-and the report closes with a box naming what the run cannot tell you. A worked
-project with deliberately planted defects lives in [`examples/jtbd/`][example].
+Gate 2 passes only when the judge's **interval** clears the best baseline's
+number — a higher point estimate with an overlapping interval has not been
+shown to beat anything. When it does not pass, the honest answer is *a judge
+is not buying you anything here*, and the report says so.
+
+Underneath: free checks on every row, one judge ranking what a human should
+open first, and a panel measuring over a sample. A guardrail that fires
+withholds the numbers it invalidates and names them. Intervals resample whole
+**items**, never `(item, field)` pairs — fields of one item move together, and
+resampling them apart fakes independence.
+
+A worked project with deliberately planted defects lives in
+[`examples/jtbd/`][example]; at thirteen items it correctly *fails* Gate 2,
+which is what a fixture that size should do.
 
 [example]: https://github.com/niruta25/llm-expectations/tree/main/examples/jtbd
 
@@ -94,8 +108,8 @@ project with deliberately planted defects lives in [`examples/jtbd/`][example].
 | M0 | skeleton | done |
 | M1 | one judge, end to end | done — first shippable |
 | M2 | free checks + full report | done |
-| M3 | panel | **done** |
-| M4 | guardrails + stats | shippable |
+| M3 | panel | done |
+| M4 | guardrails + stats | **done** — shippable |
 | M5 | labels (Mode 1) | |
 | M5b | calibration + triage evaluation | shippable |
 | M6 | free text | shippable |

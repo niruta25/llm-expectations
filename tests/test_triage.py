@@ -113,9 +113,13 @@ class TestStrategyResolution:
     def test_auto_resolves_to_the_honest_option_when_nothing_is_fitted(self):
         assert resolve_strategy("auto", calibrated=False).id == "raw_confidence"
 
+    def test_every_baseline_is_selectable(self):
+        from llm_expectations.triage.strategies import BASELINES
+
+        for name in BASELINES:
+            assert resolve_strategy(name, calibrated=False).id == name
+
     def test_a_strategy_that_has_not_landed_yet_says_when_it_will(self):
-        with pytest.raises(ValueError, match="M4, with Gate 2"):
-            resolve_strategy("random", calibrated=False)
         with pytest.raises(ValueError, match="M5b"):
             resolve_strategy("auto", calibrated=True)
 

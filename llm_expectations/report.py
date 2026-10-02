@@ -20,6 +20,7 @@ from typing import Any
 
 from .calibration.identity import UNCALIBRATED_NOTICE
 from .checks.base import Skipped
+from .gates import Gates
 from .judges.screening import JudgeHealth
 from .schema import Schema
 from .taxonomy import Taxonomy
@@ -63,6 +64,7 @@ def render(
     findings: Sequence[Finding],
     skipped: Sequence[Skipped],
     panel: Mapping[str, Any],
+    gates: Gates,
     risk_rows: Sequence[RiskRow],
     verdicts: Sequence[Verdict],
     items: Mapping[str, Item],
@@ -72,6 +74,7 @@ def render(
 ) -> str:
     out: list[str] = [f"llm-expectations   {run_id}", ""]
     out += _headline(metrics)
+    out += _gates(gates)
     out += _modes(schema, modes, label_counts)
     out += _grains(metrics)
     out += _judges(health)
@@ -96,6 +99,59 @@ def _headline(metrics: Mapping[str, Any]) -> list[str]:
     if metrics.get("cache_hits"):
         lines.append(f"  {metrics['cache_hits']:,} verdicts reused from cache — not re-paid for")
     return lines + [""]
+
+
+def _gates(gates: Gates) -> list[str]:
+    """Both gates, at the top, before any quality number is reported."""
+    marks = {"PASS": "✓", "STOP": "✗", "not run": "○"}
+    width = RULE - 4
+    lines = ["  ┌ GATES " + "─" * (width - 9) + "┐"]
+    for gate in (gates.one, gates.two):
+        mark = marks.get(gate.status, "·")
+        lines.append(f"  │  {mark} {gate.name:<26} {gate.status}")
+    lines.append("  └" + "─" * (width - 1) + "┘")
+
+    if gates.two.skipped:
+        lines += _wrapped(gates.two.skipped, indent=5)
+    lines += _gate_table(gates)
+
+    for gate in (gates.one, gates.two):
+        for result in gate.results:
+            if result.severity is Severity.NOTE:
+                continue
+            mark = "✗" if result.severity is Severity.STOP else "⚠"
+            wrapped = _wrapped(result.message, indent=6)
+            lines.append(f"    {mark} {wrapped[0].strip()}")
+            lines += [f"      {line.strip()}" for line in wrapped[1:]]
+    return lines + [""]
+
+
+def _gate_table(gates: Gates) -> list[str]:
+    """Every ranker beside every baseline. A number without one is not a result."""
+    if not gates.table:
+        return []
+    lines = [
+        "",
+        f"    ranked against {gates.target_errors} known errors in "
+        f"{gates.target_size} labelled items",
+        f"    {'strategy':<22}{'AUC':>6}  {'95% interval':<18} {'n':>5}",
+    ]
+    for score in gates.table:
+        estimate = score.estimate
+        value = "—" if estimate.value is None else f"{estimate.value:.2f}"
+        interval = (
+            "—"
+            if estimate.low is None
+            else f"[{estimate.low:.2f}, {estimate.high:.2f}]"
+        )
+        tag = "  ← baseline" if score.is_baseline else "  ← the judge"
+        lines.append(
+            f"    {score.strategy:<22}{value:>6}  {interval:<18} {estimate.n:>5}{tag}"
+        )
+    floored = [s for s in gates.table if s.estimate.under_floor]
+    if floored:
+        lines += _wrapped(floored[0].estimate.note, indent=4)
+    return lines
 
 
 def _modes(
@@ -388,6 +444,12 @@ def _evidence(found: Finding) -> str:
         return f"{evidence.get('label')!r} is a parent of {children}"
     if found.check == "cross_field_agreement":
         return f"no overlap with {evidence.get('label')} — one of the two is wrong"
+    if found.check == "label_correct_panel":
+        votes = evidence.get("votes") or {}
+        dissent = evidence.get("dissent") or {}
+        split = ", ".join(f"{j}:{v[:3]}" for j, v in sorted(votes.items()))
+        quoted = next(iter(dissent.values()), "")
+        return f"{evidence.get('agreement', '')} ({split})" + (f" — {quoted}" if quoted else "")
     return _why(found)
 
 
