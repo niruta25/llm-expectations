@@ -497,7 +497,7 @@ def analyse_run(directory: Path, *, stream: TextIO | None = None) -> RunResult:
     # The entry before this run's own, so a re-analysis compares against the
     # same baseline the original run did rather than against itself.
     entries = [e for e in read_index(directory.parent) if e.get("distributions")]
-    earlier = next(
+    earlier: dict[str, Any] = next(
         (e for e in reversed(entries) if e.get("run_id") != directory.name), {}
     )
     # Nothing was collected, so nothing was spent. The verdicts on disk record
