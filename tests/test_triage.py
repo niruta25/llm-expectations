@@ -119,9 +119,18 @@ class TestStrategyResolution:
         for name in BASELINES:
             assert resolve_strategy(name, calibrated=False).id == name
 
-    def test_a_strategy_that_has_not_landed_yet_says_when_it_will(self):
-        with pytest.raises(ValueError, match="M5b"):
-            resolve_strategy("auto", calibrated=True)
+    def test_auto_resolves_to_calibrated_risk_once_one_is_fitted(self):
+        assert resolve_strategy("auto", calibrated=True).id == "calibrated_risk"
+
+    def test_asking_for_calibrated_risk_without_a_fit_is_refused(self):
+        # Silently falling back would let a report say "calibrated" about a
+        # ranking that is nothing of the sort.
+        with pytest.raises(ValueError, match="needs a fitted calibration"):
+            resolve_strategy("calibrated_risk", calibrated=False)
+
+    def test_an_unknown_strategy_lists_what_exists(self):
+        with pytest.raises(ValueError, match="unknown triage strategy"):
+            resolve_strategy("vibes", calibrated=False)
 
 
 class TestLabelLeak:

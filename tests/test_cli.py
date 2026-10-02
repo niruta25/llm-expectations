@@ -91,3 +91,94 @@ def test_the_cli_never_reaches_the_network_when_the_factory_is_replaced(
     monkeypatch.setattr(providers.httpx, "Client", explode)
     monkeypatch.setattr(run_module, "build_provider", lambda spec: scripted())
     assert main(["run", str(EXAMPLE / "run.yml"), "--out", str(tmp_path), "--yes"]) == 0
+
+
+def test_triage_eval_reads_from_disk_and_makes_no_calls(tmp_path, monkeypatch, capsys):
+    """The table is computed from verdicts and labels on disk, for nothing."""
+    import json
+    import random
+
+    import llm_expectations.run as run_module
+    from llm_expectations.judges.fake import FakeProvider, reply
+
+
+    rng = random.Random(0)
+    labels_pool = [
+        "billing.payment_failed", "billing.card_declined", "billing.refund_request",
+        "access.password_reset", "access.sso_issue",
+    ]
+    root = tmp_path / "project"
+    root.mkdir()
+    items, outputs, labels = [], [], []
+    for i in range(400):
+        truth = rng.choice(labels_pool)
+        assigned = (
+            rng.choice([x for x in labels_pool if x != truth]) if rng.random() < 0.2 else truth
+        )
+        items.append({"id": f"s-{i}", "text": f"session {i} about {truth}"})
+        outputs.append({"item_id": f"s-{i}", "jtbd": assigned})
+        labels.append(
+            {"item_id": f"s-{i}", "field": "jtbd", "label": truth, "annotator": "ann-1"}
+        )
+    for name, rows in (
+        ("items.jsonl", items), ("outputs.jsonl", outputs), ("labels.jsonl", labels)
+    ):
+        (root / name).write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    (root / "taxonomy.yml").write_text(
+        (EXAMPLE / "taxonomy.yml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (root / "judges.yml").write_text(
+        (EXAMPLE / "judges.yml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (root / "schema.yml").write_text(
+        "item: s\nfields:\n  jtbd: {kind: assigned, taxonomy: 'jtbd@v4'}\n", encoding="utf-8"
+    )
+    (root / "run.yml").write_text(
+        "run_id: big\nitems: items.jsonl\noutputs: outputs.jsonl\nlabels: labels.jsonl\n"
+        "schema: schema.yml\ntaxonomy: taxonomy.yml\njudges: judges.yml\n",
+        encoding="utf-8",
+    )
+
+    provider = FakeProvider(model="m", default=reply(False, 0.8, "unsure"))
+    monkeypatch.setattr(run_module, "build_provider", lambda spec: provider)
+    out = tmp_path / "out"
+    assert main(["run", str(root / "run.yml"), "--out", str(out), "--yes"]) == 0
+    directory = next(p for p in out.iterdir() if p.is_dir())
+
+    calls = len(provider.calls)
+    capsys.readouterr()
+    assert main(["triage-eval", str(directory)]) == 0
+    printed = capsys.readouterr().out
+    assert "Error Recall@Budget" in printed
+    assert "Zero model calls" in printed
+    assert len(provider.calls) == calls
+
+
+def test_triage_eval_on_an_unlabelled_run_says_why(tmp_path, monkeypatch, capsys, scripted):
+    import llm_expectations.run as run_module
+
+    monkeypatch.setattr(run_module, "build_provider", lambda spec: scripted())
+    out = tmp_path / "out"
+    # The minimal project has no labels.
+    from .conftest import MINIMAL_JUDGES, MINIMAL_RUN, MINIMAL_SCHEMA, MINIMAL_TAXONOMY
+
+    root = tmp_path / "p"
+    root.mkdir()
+    for name, body in (
+        ("taxonomy.yml", MINIMAL_TAXONOMY),
+        ("schema.yml", MINIMAL_SCHEMA),
+        ("judges.yml", MINIMAL_JUDGES),
+        ("run.yml", MINIMAL_RUN),
+        ("items.jsonl", '{"id": "s-1", "text": "her card was declined"}\n'),
+        (
+            "outputs.jsonl",
+            '{"item_id": "s-1", "jtbd": "billing.payment_failed", "summary": "declined"}\n',
+        ),
+    ):
+        (root / name).write_text(body, encoding="utf-8")
+
+    assert main(["run", str(root / "run.yml"), "--out", str(out), "--yes"]) == 0
+    directory = next(p for p in out.iterdir() if p.is_dir())
+    capsys.readouterr()
+    assert main(["triage-eval", str(directory)]) == 2
+    assert "human labels" in capsys.readouterr().err

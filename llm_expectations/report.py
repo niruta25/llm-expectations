@@ -26,7 +26,7 @@ from .schema import Schema
 from .taxonomy import Taxonomy
 from .types import Finding, Grain, Item, Mode, RiskRow, Severity, Status, Verdict
 
-__all__ = ["render"]
+__all__ = ["operating_point_table", "render"]
 
 REVIEW_PREVIEW = 10
 EVIDENCE_PREVIEW = 4
@@ -71,6 +71,8 @@ def render(
     skipped: Sequence[Skipped],
     panel: Mapping[str, Any],
     humans: Mapping[str, Any],
+    calibration: Mapping[str, Any],
+    triage_eval: Mapping[str, Any],
     gates: Gates,
     risk_rows: Sequence[RiskRow],
     verdicts: Sequence[Verdict],
@@ -92,7 +94,15 @@ def render(
         out += _vs_humans((humans.get("fields") or {}).get(name), name)
     out += _judges_vs_humans(humans.get("judges") or [])
 
-    out += _review(risk_rows, verdicts, ranked_by=str(metrics.get("ranked_by") or ""))
+    out += _calibration(calibration)
+    out += operating_point_table(triage_eval)
+    out += _review(
+        risk_rows,
+        verdicts,
+        ranked_by=str(metrics.get("ranked_by") or ""),
+        strategy=str(metrics.get("strategy") or ""),
+        calibrated=bool(metrics.get("calibrated")),
+    )
     out += _cannot(cannot_tell)
     out += _exclusions(exclusions)
     return "\n".join(out).rstrip() + "\n"
@@ -669,8 +679,104 @@ def _maybe(value: float | None, places: int = 2) -> str:
     return "—" if value is None else f"{value:.{places}f}"
 
 
+def _calibration(calibration: Mapping[str, Any]) -> list[str]:
+    """What was fitted, whether it helped, and whether it changed anything."""
+    if not calibration:
+        return []
+    lines = ["  CALIBRATION"]
+    if not calibration.get("fitted"):
+        lines += _wrapped(str(calibration.get("why", "nothing was fitted")), indent=4)
+        for name, fit in sorted((calibration.get("fields") or {}).items()):
+            for note in fit.get("notes") or []:
+                lines += _wrapped(f"{name}: {note}", indent=6)
+        return lines + [""]
+
+    for name, fit in sorted((calibration.get("fields") or {}).items()):
+        if not fit.get("fitted"):
+            lines.append(f"    {name:<22} not fitted")
+            for note in fit.get("notes") or []:
+                lines += _wrapped(note, indent=6)
+            continue
+        ece, brier, base = fit.get("ece"), fit.get("brier"), fit.get("brier_base_rate")
+        mark = "✗" if (ece or 0) > 0.10 else "✓"
+        lines.append(
+            f"    {name:<22} n={fit['n']}   ECE {ece:.3f} {mark}   "
+            f"Brier {brier:.3f} vs {base:.3f} base rate"
+        )
+        for note in fit.get("notes") or []:
+            lines += _wrapped(note, indent=6)
+    if calibration.get("why"):
+        lines += _wrapped(str(calibration["why"]), indent=4)
+    return lines + [""]
+
+
+def operating_point_table(evaluation: Mapping[str, Any]) -> list[str]:
+    """The deliverable: what a review budget actually buys you.
+
+    DESIGN.md §7 is explicit that this, not AUC, is the primary metric — it
+    is the question a person with five hundred review-hours actually has.
+    """
+    if not evaluation:
+        return []
+    if evaluation.get("skipped"):
+        return ["  OPERATING POINT", *_wrapped(str(evaluation["skipped"]), indent=4), ""]
+
+    strategies = evaluation.get("strategies") or []
+    if not strategies:
+        return []
+    lines = [
+        "  OPERATING POINT   Error Recall@Budget",
+        f"    {evaluation['target_errors']} known errors in "
+        f"{evaluation['target_items']} labelled items",
+        "",
+        f"    {'strategy':<20}{'budget':>7}{'reviewed':>10}{'found':>8}"
+        f"{'recall':>9}{'wasted':>9}",
+    ]
+    for entry in strategies:
+        tag = "" if entry["baseline"] else "  ← the judge"
+        for point in entry["points"]:
+            recall = point["error_recall"]
+            wasted = point["wasted"]
+            lines.append(
+                f"    {entry['strategy']:<20}{point['budget']:>6.1%}"
+                f"{point['n_reviewed']:>10,}{_found(point['errors_found']):>8}"
+                f"{_pct_or(recall):>9}{_pct_or(wasted):>9}{tag}"
+            )
+            tag = ""
+        lines.append("")
+
+    judge = next((e for e in strategies if not e["baseline"]), None)
+    if judge and judge["unranked_errors"]:
+        lines += _wrapped(
+            f"{judge['unranked']} labelled items could not be ranked and "
+            f"{judge['unranked_errors']} of them are errors — never reviewed at any "
+            "budget, and excluded from every recall above.",
+            indent=4,
+        )
+    return lines + [""]
+
+
+def _pct_or(value: float | None) -> str:
+    return "—" if value is None else f"{value:.1%}"
+
+
+def _found(value: float) -> str:
+    """A tied block split across the cutoff yields a fraction of an error.
+
+    Rounding 0.4 to "0" beside a recall of 8% reads as a contradiction; it
+    is the expected count under fair tie-breaking, and showing the decimal
+    is what makes the two agree.
+    """
+    return f"{value:.0f}" if float(value).is_integer() else f"{value:.1f}"
+
+
 def _review(
-    risk_rows: Sequence[RiskRow], verdicts: Sequence[Verdict], *, ranked_by: str = ""
+    risk_rows: Sequence[RiskRow],
+    verdicts: Sequence[Verdict],
+    *,
+    ranked_by: str = "",
+    strategy: str = "",
+    calibrated: bool = False,
 ) -> list[str]:
     reasons = _reasons(verdicts, ranked_by=ranked_by)
     ranked = [row for row in risk_rows if row.triage_score is not None]
@@ -678,7 +784,12 @@ def _review(
     lines: list[str] = []
 
     if ranked:
-        lines.append("  ⚠ " + UNCALIBRATED_NOTICE.replace("\n", "\n  "))
+        if calibrated:
+            lines.append(
+                f"  ranked by {strategy} — a fitted probability of error, not a feeling"
+            )
+        else:
+            lines.append("  ⚠ " + UNCALIBRATED_NOTICE.replace("\n", "\n  "))
         lines.append("")
         shown = ranked[:REVIEW_PREVIEW]
         lines.append(f"  REVIEW FIRST   (top {len(shown)} of {len(ranked)} ranked)")

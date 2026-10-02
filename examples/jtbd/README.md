@@ -37,9 +37,13 @@ the report lists what it withheld:
     ✗ only 5 errors in 13 labelled items (38.5%) — the floor is 30 and 5%.
 ```
 
+It fits no calibration either: a two-parameter logistic curve needs ~100
+labelled rows, thirteen is not that, and the report says so rather than
+producing a curve that has memorised the sample.
+
 If this example ever reports a confident ranking number, that is a bug in the
-guardrails. Tests that need a corpus Gate 2 can actually run on build one —
-see the `big_corpus` fixture in `tests/conftest.py`.
+guardrails. Tests that need a corpus Gate 2 and the Platt fit can actually
+run on build one — see the `big_corpus` fixture in `tests/conftest.py`.
 
 ## What lands here today
 

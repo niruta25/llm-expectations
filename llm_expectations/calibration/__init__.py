@@ -14,11 +14,17 @@ from __future__ import annotations
 
 from .base import Calibrator, FitReport, StaleCalibration, fingerprint
 from .identity import IdentityCalibrator
+from .platt import FieldCalibrator, PlattCalibrator
+from .quality import Reliability, reliability
 
 __all__ = [
     "Calibrator",
+    "FieldCalibrator",
     "FitReport",
     "IdentityCalibrator",
+    "PlattCalibrator",
+    "Reliability",
     "StaleCalibration",
     "fingerprint",
+    "reliability",
 ]
