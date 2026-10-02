@@ -13,6 +13,14 @@ reaches them, and it is how you see *why* two judges split.
 **``cannot_decide`` is allowed.** Forcing a verdict on an item that does not
 say enough manufactures noise. It maps to unscored — never to "wrong".
 
+A fifth thing, which the design implies rather than states. A judge that
+rejects a label is asked which label it would assign instead. DESIGN.md §9
+promises fuzzy label *pairs* from panel disagreement with no human labels, and
+a yes/no verdict cannot produce a pair — the second half would have to be
+guessed from sibling structure, which is the unearned inference this library
+exists to catch. A few extra output tokens make the pair real, and the
+suggestion is what a reviewer opening the item wants to see anyway.
+
 **Every panel judge gets the byte-identical prompt.** Nothing here varies by
 judge, so panel disagreement measures judges rather than prompt differences.
 
@@ -42,7 +50,10 @@ The permitted labels are:
 {labels}
 
 Reply with one JSON object and nothing else:
-{{"correct": true | false | "cannot_decide", "confidence": <0 to 1>, "reason": "<one sentence>"}}"""
+{{"correct": true | false | "cannot_decide",
+ "confidence": <0 to 1>,
+ "reason": "<one sentence>",
+ "instead": "<the label you would assign, only when correct is false>"}}"""
 
 _USER = """ITEM:
 {text}
@@ -109,11 +120,21 @@ class LabelCorrectTask:
         confidence = _confidence(payload.get("confidence"))
 
         if isinstance(correct, bool):
+            # A suggestion only means something on a rejection. Attached to an
+            # approval it is the judge contradicting itself, and carrying it
+            # forward would put a phantom pair into the fuzzy-pair table.
+            instead = payload.get("instead")
+            detail = (
+                {"instead": instead.strip()}
+                if not correct and isinstance(instead, str) and instead.strip()
+                else {}
+            )
             return ParsedReply(
                 outcome=ReplyOutcome.ANSWERED,
                 status=Status.PASS if correct else Status.FAIL,
                 raw_confidence=confidence,
                 reason=reason,
+                detail=detail,
             )
         if isinstance(correct, str) and correct.strip().lower() in {
             "cannot_decide",

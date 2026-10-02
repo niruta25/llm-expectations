@@ -48,6 +48,9 @@ def test_run_then_analyse(tmp_path, monkeypatch, capsys, scripted):
     import llm_expectations.run as run_module
 
     provider = scripted()
+    # Patched at module level, which only works because `run` resolves the
+    # factory at call time. A default argument would have bound the real one
+    # and sent this test at the network.
     monkeypatch.setattr(run_module, "build_provider", lambda spec: provider)
     assert main(["run", str(EXAMPLE / "run.yml"), "--out", str(tmp_path), "--yes"]) == 0
     directory = next(p for p in tmp_path.iterdir() if p.is_dir())
@@ -67,3 +70,24 @@ def test_run_declined_at_the_prompt_exits_nonzero(tmp_path, monkeypatch, scripte
     monkeypatch.setattr("builtins.input", lambda _: "n")
     assert main(["run", str(EXAMPLE / "run.yml"), "--out", str(tmp_path)]) == 1
     assert provider.calls == []
+
+
+def test_the_cli_never_reaches_the_network_when_the_factory_is_replaced(
+    tmp_path, monkeypatch, scripted
+):
+    """`run` must resolve its provider factory at call time, not bind it.
+
+    A default argument of `provider_factory=build_provider` captures the real
+    function when the module is imported, so replacing the module attribute
+    does nothing and the run goes out to the internet. This test fails in
+    seconds rather than minutes if that regresses.
+    """
+    import llm_expectations.judges.providers as providers
+    import llm_expectations.run as run_module
+
+    def explode(*args, **kwargs):
+        raise AssertionError("a real provider was constructed")
+
+    monkeypatch.setattr(providers.httpx, "Client", explode)
+    monkeypatch.setattr(run_module, "build_provider", lambda spec: scripted())
+    assert main(["run", str(EXAMPLE / "run.yml"), "--out", str(tmp_path), "--yes"]) == 0

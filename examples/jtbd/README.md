@@ -49,6 +49,13 @@ looked. Every unchecked field carries an unscored finding naming what is
 missing, and the report's closing box lists it.
 
 The pair `billing.payment_failed` ↔ `billing.card_declined` is the intended
-fuzzy boundary. `ann-2` disagrees with `ann-1` on exactly that pair in `s-07`
-and `s-10`, which is the strongest evidence the fuzzy-pair detector takes: two
-people who cannot separate two labels is not a model problem.
+fuzzy boundary, and all three sources of evidence for it are in this fixture:
+
+- **Panel disagreement**, free and available today. When judges split on
+  `s-07` or `s-10`, the dissenter names the label it would assign instead and
+  the pair becomes a boundary rather than a guess.
+- **A confusion matrix**, at M5, which adds direction — symmetric means fix
+  the taxonomy, one-way means fix the prompt.
+- **Two annotators disagreeing**, the strongest evidence of the three.
+  `ann-2` splits from `ann-1` on exactly that pair in `s-07` and `s-10`. Two
+  people who cannot separate two labels is not a model problem.

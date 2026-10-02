@@ -13,7 +13,7 @@ to receive them through.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -26,14 +26,18 @@ from .calibration.base import Calibrator
 from .checks import CheckContext, run_checks
 from .checks.corpus import label_shares
 from .config import RunConfig, load_run
-from .judges.base import Judge, Provider, ReplyOutcome
+from .judges.base import Judge, JudgeTask, Provider, ReplyOutcome
+from .judges.panel import CHECK_ID as PANEL_CHECK
+from .judges.panel import majority, sample_items
 from .judges.prompts import LabelCorrectTask, label_is_judgeable
 from .judges.providers import build_provider
 from .judges.screening import JudgeHealth, screen, unreadable_items
+from .metrics.agreement import effective_votes, fuzzy_pairs, leniency
 from .plan import Plan, estimate_cost, plan_run
 from .read import index_items, read_labels, read_outputs
 from .report import render
-from .schema import FieldKind
+from .schema import FieldKind, FieldSpec
+from .taxonomy import Taxonomy
 from .triage import TriageContext, build_risk_rows, resolve_strategy
 from .types import Finding, Grain, Item, Label, Mode, Output, RiskRow, Status, Verdict
 from .write import (
@@ -150,39 +154,71 @@ def label_counts(config: RunConfig, labels: Sequence[Label]) -> dict[str, tuple[
     }
 
 
-def collect(
-    config: RunConfig,
-    items: Mapping[str, Item],
-    outputs: Mapping[str, Output],
-    *,
-    cache: VerdictCache,
-    guard: BudgetGuard,
-    provider: Provider,
-) -> list[Verdict]:
-    """Ask the triage judge about every assigned field it can judge.
-
-    The signature is the label-leak guarantee: items and outputs go in, and
-    there is no parameter a human label could arrive through. A judge cannot be
-    graded against an answer key it was never handed.
-    """
-    triage = config.judges.triage
-    if triage is None:
-        return []
-
-    spec = config.judges.judges[triage.judge]
+def _judge_for(config: RunConfig, judge_id: str, provider: Provider) -> Judge:
+    spec = config.judges.judges[judge_id]
     temperature = spec.temperature
     if temperature is None:
         temperature = float(config.settings.value("judge_temperature"))
-    max_tokens = spec.max_tokens or int(config.settings.value("judge_max_tokens"))
-    judge = Judge(
-        judge_id=spec.id, provider=provider, temperature=temperature, max_tokens=max_tokens
+    return Judge(
+        judge_id=spec.id,
+        provider=provider,
+        temperature=temperature,
+        max_tokens=spec.max_tokens or int(config.settings.value("judge_max_tokens")),
     )
 
-    item_ids = tuple(items)
-    if isinstance(triage.scope, int):
-        item_ids = item_ids[: triage.scope]
 
-    verdicts: list[Verdict] = []
+def _ask_cached(
+    judge: Judge,
+    model: str,
+    task: JudgeTask,
+    item: Item,
+    output: Output,
+    field: str,
+    taxonomy: Taxonomy | None,
+    *,
+    cache: VerdictCache,
+    guard: BudgetGuard,
+) -> Verdict:
+    """One question, asked at most once ever.
+
+    The cache key is the question — judge, model, rendered prompt, item, field
+    and value — and not the job that wanted the answer. A judge sitting on the
+    panel *and* doing triage is asked the same thing twice by two callers and
+    pays for it once.
+    """
+    request = judge.build(task, item, output, field, taxonomy)
+    key = cache_key(
+        judge_id=judge.judge_id,
+        model=model,
+        prompt_fingerprint=request.fingerprint,
+        item_id=item.id,
+        field=field,
+        output_value=output.get(field),
+    )
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
+    if guard.exhausted:
+        return _unscored(judge.judge_id, task.check_id, item.id, field, guard.cap_reason())
+    _, verdict = judge.ask(task, item, output, field, taxonomy)
+    stored = cache.put(key, verdict)
+    guard.spend(
+        estimate_cost(
+            model,
+            int(verdict.metadata.get("input_tokens", 0)),
+            int(verdict.metadata.get("output_tokens", 0)),
+        )
+    )
+    return stored
+
+
+def _assigned_work(
+    config: RunConfig,
+    items: Mapping[str, Item],
+    outputs: Mapping[str, Output],
+    item_ids: Sequence[str],
+) -> Iterator[tuple[FieldSpec, LabelCorrectTask, Taxonomy | None, Item, Output]]:
+    """Every (field, item) an assigned-label judge could be asked about."""
     for field_spec in config.schema.fields.values():
         if field_spec.kind is not FieldKind.ASSIGNED:
             continue
@@ -194,34 +230,62 @@ def collect(
             output = outputs.get(item_id)
             if output is None or not label_is_judgeable(output, field_spec.name):
                 continue
-            item = items[item_id]
-            request = judge.build(task, item, output, field_spec.name, taxonomy)
-            key = cache_key(
-                judge_id=spec.id,
-                model=spec.model,
-                prompt_fingerprint=request.fingerprint,
-                item_id=item_id,
-                field=field_spec.name,
-                output_value=output.get(field_spec.name),
-            )
-            hit = cache.get(key)
-            if hit is not None:
-                verdicts.append(hit)
-                continue
-            if guard.exhausted:
-                verdicts.append(
-                    _unscored(spec.id, task.check_id, item_id, field_spec.name, guard.cap_reason())
+            yield field_spec, task, taxonomy, items[item_id], output
+
+
+def collect(
+    config: RunConfig,
+    items: Mapping[str, Item],
+    outputs: Mapping[str, Output],
+    *,
+    cache: VerdictCache,
+    guard: BudgetGuard,
+    providers: Mapping[str, Provider],
+) -> list[Verdict]:
+    """Ask the triage judge, and ask the panel.
+
+    The signature is the label-leak guarantee: items and outputs go in, and
+    there is no parameter a human label could arrive through. A judge cannot
+    be graded against an answer key it was never handed.
+    """
+    verdicts: list[Verdict] = []
+    triage, panel = config.judges.triage, config.judges.panel
+
+    if triage is not None and triage.judge in providers:
+        judge = _judge_for(config, triage.judge, providers[triage.judge])
+        model = config.judges.judges[triage.judge].model
+        scope = tuple(items)
+        if isinstance(triage.scope, int):
+            scope = scope[: triage.scope]
+        for spec, task, taxonomy, item, output in _assigned_work(config, items, outputs, scope):
+            verdicts.append(
+                _ask_cached(
+                    judge, model, task, item, output, spec.name, taxonomy,
+                    cache=cache, guard=guard,
                 )
-                continue
-            _, verdict = judge.ask(task, item, output, field_spec.name, taxonomy)
-            verdicts.append(cache.put(key, verdict))
-            guard.spend(
-                estimate_cost(
-                    spec.model,
-                    int(verdict.metadata.get("input_tokens", 0)),
-                    int(verdict.metadata.get("output_tokens", 0)),
-                )
             )
+
+    if panel is not None:
+        sample = sample_items(tuple(items), panel.sample)
+        for member in panel.members:
+            if member not in providers:
+                continue
+            judge = _judge_for(config, member, providers[member])
+            model = config.judges.judges[member].model
+            for spec, task, taxonomy, item, output in _assigned_work(
+                config, items, outputs, sample
+            ):
+                verdict = _ask_cached(
+                    judge, model, task, item, output, spec.name, taxonomy,
+                    cache=cache, guard=guard,
+                )
+                # The triage pass may already have collected this exact
+                # answer. One question, one row.
+                if not any(
+                    v.judge_id == member and v.item_id == item.id and v.field == spec.name
+                    for v in verdicts
+                ):
+                    verdicts.append(verdict)
     return verdicts
 
 
@@ -312,8 +376,19 @@ def build_triage(
     verdicts: Sequence[Verdict],
     calibrator: Calibrator,
 ) -> tuple[tuple[RiskRow, ...], str]:
+    """Rank on the triage judge's verdicts alone.
+
+    Panel members' opinions are deliberately excluded. Disagreement does not
+    rank errors, and letting extra judges leak into the ranking would mean the
+    panel quietly became a routing signal — the first of the three things
+    DESIGN.md §6 says it must not do. It ships as a scored baseline at M4.
+    """
+    triage = config.judges.triage
+    ranker = triage.judge if triage is not None else None
     by_item: dict[str, list[Verdict]] = {}
     for verdict in verdicts:
+        if ranker is not None and verdict.judge_id != ranker:
+            continue
         by_item.setdefault(verdict.item_id, []).append(verdict)
     ctx = TriageContext(
         verdicts={k: tuple(v) for k, v in by_item.items()},
@@ -325,6 +400,110 @@ def build_triage(
     requested = config.judges.triage.strategy if config.judges.triage else "auto"
     strategy = resolve_strategy(requested, calibrated=calibrator.is_calibrated)
     return build_risk_rows(ctx, strategy.rank(ctx), strategy.id), strategy.id
+
+
+def panel_analysis(
+    config: RunConfig, dataset: Dataset, verdicts: Sequence[Verdict], health: Sequence[JudgeHealth]
+) -> tuple[list[Finding], dict[str, Any]]:
+    """Majority findings and the panel's three outputs.
+
+    A judge outside the approval band is dropped from the aggregates and from
+    the vote, and the report says which and why. Its verdicts stay on disk —
+    suppressing them would hide the evidence for the exclusion.
+    """
+    panel = config.judges.panel
+    if panel is None:
+        return [], {}
+
+    excluded = {row.judge_id for row in health if row.excluded_from_panel}
+    members = tuple(m for m in panel.members if m not in excluded)
+    sample = set(sample_items(tuple(dataset.items), panel.sample))
+    in_panel = [
+        v for v in verdicts if v.judge_id in set(panel.members) and v.item_id in sample
+    ]
+
+    by_key: dict[tuple[str, str], list[Verdict]] = {}
+    for verdict in in_panel:
+        by_key.setdefault((verdict.item_id, verdict.field), []).append(verdict)
+
+    findings: list[Finding] = []
+    results = []
+    for (item_id, field_name), group in sorted(by_key.items()):
+        result = majority(group, members=members)
+        results.append(result)
+        findings.append(
+            Finding(
+                run_id=config.run_id,
+                check=PANEL_CHECK,
+                grain=Grain.FIELD,
+                status=result.status,
+                item_id=item_id,
+                field=field_name,
+                evidence={
+                    "votes": dict(result.votes),
+                    "agreement": result.agreement,
+                    "dissent": dict(result.dissent),
+                    **({"instead": dict(result.instead)} if result.instead else {}),
+                    **(
+                        {"excluded": sorted(excluded)}
+                        if excluded
+                        else {}
+                    ),
+                },
+                judge=",".join(members),
+            )
+        )
+
+    scored = [r for r in results if r.status is not Status.UNSCORED]
+    report = effective_votes(
+        in_panel, members, warn_below=float(config.settings.value("effective_votes_warn"))
+    )
+    # A suggestion is only a boundary if it is a label of *that* field. A
+    # judge naming something from another taxonomy is a health problem, not a
+    # fuzzy pair.
+    vocabularies = {
+        name: frozenset(taxonomy.nodes)
+        for name in config.schema.fields
+        if (taxonomy := config.taxonomy_for(name)) is not None
+    }
+    fuzzy = fuzzy_pairs(
+        in_panel,
+        members,
+        dataset.outputs,
+        vocabularies=vocabularies,
+        top=int(config.settings.value("fuzzy_pair_report")),
+    )
+    return findings, {
+        "members": list(members),
+        "excluded": sorted(excluded),
+        "sampled_items": len(sample),
+        "judged_rows": len(by_key),
+        "majority_correct": (
+            sum(r.status is Status.PASS for r in scored) / len(scored) if scored else None
+        ),
+        "undecided": len(results) - len(scored),
+        "agreement": report.agreement,
+        "mean_correlation": report.mean_correlation,
+        "effective_votes": report.effective_votes,
+        "votes_paid_for": report.votes_paid_for,
+        "warning": report.warning,
+        "leniency": [
+            {
+                "lenient": entry.lenient,
+                "strict": entry.strict,
+                "lenient_approved": entry.lenient_approved,
+                "strict_approved": entry.strict_approved,
+            }
+            for entry in leniency(in_panel, members)
+        ],
+        "splits": fuzzy.splits,
+        "splits_attributed": fuzzy.attributed,
+        "splits_unusable": fuzzy.unusable,
+        "fuzzy_pairs": [
+            {"field": p.field, "left": p.left, "right": p.right, "splits": p.splits}
+            for p in fuzzy.pairs
+        ],
+    }
 
 
 def grain_rates(findings: Sequence[Finding]) -> dict[str, Any]:
@@ -399,6 +578,12 @@ def what_this_run_cannot_tell_you(
             f"how often the judge agrees with the humans on {', '.join(labelled)}\n"
             "labels are loaded and untouched — grading the judge against them is M5"
         )
+    if config.judges.panel is None:
+        lines.append(
+            "how good this corpus is overall, or which label pairs are fuzzy\n"
+            "no panel is wired in judges.yml. A panel of two or more over a sample "
+            "answers both, and locating a fuzzy boundary needs nothing but the split."
+        )
     for row in health:
         if row.excluded_from_panel:
             lines.append(
@@ -412,7 +597,7 @@ def run(
     config: RunConfig,
     *,
     out: Path,
-    provider_factory: Callable[..., Provider] = build_provider,
+    provider_factory: Callable[..., Provider] | None = None,
     stream: TextIO | None = None,
     ask: Callable[[str], str] | None = None,
     reuse: Path | None = None,
@@ -421,6 +606,11 @@ def run(
     """Collect and analyse. Returns None if the cost prompt was declined."""
     import sys
 
+    # Resolved here, not in the signature. A default argument binds at
+    # definition time, so `provider_factory=build_provider` in the signature
+    # would capture the original function and quietly ignore anyone who
+    # replaced it — including a test that thought it had.
+    provider_factory = provider_factory or build_provider
     stream = stream or sys.stdout
     started = time.perf_counter()
     dataset = load_dataset(config)
@@ -441,13 +631,20 @@ def run(
         stream.write("nothing was spent.\n")
         return None
 
-    triage = config.judges.triage
-    provider = (
-        provider_factory(config.judges.judges[triage.judge]) if triage is not None else None
-    )
+    wanted = set()
+    if config.judges.triage is not None:
+        wanted.add(config.judges.triage.judge)
+    if config.judges.panel is not None:
+        wanted.update(config.judges.panel.members)
+    providers = {
+        judge_id: provider_factory(config.judges.judges[judge_id]) for judge_id in sorted(wanted)
+    }
     verdicts = (
-        collect(config, dataset.items, dataset.outputs, cache=cache, guard=guard, provider=provider)
-        if provider is not None
+        collect(
+            config, dataset.items, dataset.outputs,
+            cache=cache, guard=guard, providers=providers,
+        )
+        if providers
         else []
     )
     cache.close()
@@ -543,7 +740,12 @@ def _analyse(
         previous=previous or {},
     )
     free_findings, skipped = run_checks(check_ctx)
-    findings = [*free_findings, *to_findings(run_id, config, dataset, verdicts)]
+    panel_findings, panel = panel_analysis(config, dataset, verdicts, health)
+    findings = [
+        *free_findings,
+        *to_findings(run_id, config, dataset, verdicts),
+        *panel_findings,
+    ]
     calibrator: Calibrator = IdentityCalibrator()
     risk_rows, strategy_id = build_triage(config, dataset, verdicts, calibrator)
 
@@ -566,6 +768,7 @@ def _analyse(
         "cache_hits": len(verdicts) - len(collected),
         "elapsed_s": round(elapsed, 2),
         "strategy": strategy_id,
+        "ranked_by": config.judges.triage.judge if config.judges.triage else None,
         "calibrated": calibrator.is_calibrated,
         "modes": {name: int(mode) for name, mode in modes.items()},
         "label_counts": counts,
@@ -595,6 +798,7 @@ def _analyse(
         "checks_not_run": [
             {"check": s.check, "field": s.field, "reason": s.reason} for s in skipped
         ],
+        "panel": panel,
     }
 
     cannot = what_this_run_cannot_tell_you(config, modes, health)
@@ -607,6 +811,7 @@ def _analyse(
         health=health,
         findings=findings,
         skipped=skipped,
+        panel=panel,
         risk_rows=risk_rows,
         verdicts=verdicts,
         items=dataset.items,

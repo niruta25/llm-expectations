@@ -1,14 +1,14 @@
 """llm-expectations — quality checks for LLM outputs that are judgements *about*
 a document, not values copied *out of* one.
 
-Pre-alpha. Two things work: the free checks — label validity, leaf depth,
+Pre-alpha. Three things work: the free checks — label validity, leaf depth,
 abstention rate, label collapse, drift against the last run, and cross-field
-agreement — and a triage judge that ranks what a human should open first.
-Both grains are reported, and the report names what it cannot conclude.
+agreement; a triage judge that ranks what a human should open first; and a
+panel that measures quality over a sample, reports what its votes are
+actually worth, and locates the label boundaries it keeps splitting on.
 
-That is M0 through M2 (DESIGN.md §12). The panel arrives at M3, the baselines
-that say whether the ranking beats guessing at M4, and the operating-point
-table at M5b.
+That is M0 through M3 (DESIGN.md §12). The baselines that say whether the
+ranking beats guessing arrive at M4, and the operating-point table at M5b.
 
   - assigned fields   a label chosen from a versioned taxonomy
   - free text fields  a sentence written about the item
@@ -32,6 +32,7 @@ from .checks import CheckContext, run_checks
 from .config import ConfigError, RunConfig, Settings, load_run
 from .judges import Judge, JudgeError, LabelCorrectTask
 from .judges.fake import FakeProvider
+from .metrics import AgreementReport, FuzzyPair, effective_votes
 from .plan import plan_run
 from .read import ReadError, index_items, read_items, read_labels, read_outputs
 from .schema import FieldKind, FieldSpec, Schema, SchemaError, TextStyle
@@ -56,6 +57,7 @@ __version__ = "0.0.0"
 
 __all__ = [
     "ABSTAIN",
+    "AgreementReport",
     "Calibrator",
     "CheckContext",
     "ConfigError",
@@ -64,6 +66,7 @@ __all__ = [
     "FieldKind",
     "FieldSpec",
     "Finding",
+    "FuzzyPair",
     "Grain",
     "IdentityCalibrator",
     "Item",
@@ -89,6 +92,7 @@ __all__ = [
     "Verdict",
     "__version__",
     "check_recorded_hash",
+    "effective_votes",
     "index_items",
     "load_run",
     "load_taxonomy",
