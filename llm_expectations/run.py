@@ -17,12 +17,14 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from .budget import BudgetGuard
 from .cache import VerdictCache, cache_key
 from .calibration import IdentityCalibrator
 from .calibration.base import Calibrator
+from .checks import CheckContext, run_checks
+from .checks.corpus import label_shares
 from .config import RunConfig, load_run
 from .judges.base import Judge, Provider, ReplyOutcome
 from .judges.prompts import LabelCorrectTask, label_is_judgeable
@@ -37,6 +39,7 @@ from .types import Finding, Grain, Item, Label, Mode, Output, RiskRow, Status, V
 from .write import (
     append_index,
     finding_row,
+    read_index,
     read_verdicts,
     risk_row,
     run_directory,
@@ -282,7 +285,7 @@ def to_findings(
 
     for name, spec in config.schema.fields.items():
         why = (
-            "free-text checks and the claim judge arrive at M6"
+            "the claim judge for free text arrives at M6"
             if spec.kind is FieldKind.FREE_TEXT
             else "the label was an abstention, so there is nothing to check it against"
         )
@@ -324,6 +327,55 @@ def build_triage(
     return build_risk_rows(ctx, strategy.rank(ctx), strategy.id), strategy.id
 
 
+def grain_rates(findings: Sequence[Finding]) -> dict[str, Any]:
+    """Pass rates at both grains. The item one is the one a consumer needs.
+
+    An item with a correct label and a made-up summary is not a usable item,
+    so an item passes only if every scored finding on it passes. Unscored
+    findings are counted separately and never absorbed into either rate —
+    that is the whole point of having a third state.
+    """
+    scored = [f for f in findings if f.status is not Status.UNSCORED]
+    by_item: dict[str, list[bool]] = {}
+    for found in scored:
+        if found.item_id is not None:
+            by_item.setdefault(found.item_id, []).append(found.status is Status.PASS)
+    field_rate = (
+        sum(f.status is Status.PASS for f in scored) / len(scored) if scored else None
+    )
+    item_rate = (
+        sum(all(results) for results in by_item.values()) / len(by_item) if by_item else None
+    )
+    return {
+        "field": {
+            "pass_rate": field_rate,
+            "scored": len(scored),
+            "unscored": len(findings) - len(scored),
+        },
+        "item": {
+            "pass_rate": item_rate,
+            "items": len(by_item),
+            "failing": sum(not all(r) for r in by_item.values()),
+        },
+    }
+
+
+def previous_run(out: Path, config: RunConfig) -> dict[str, Any]:
+    """The last run's distributions, for the drift check.
+
+    Read from the append-only index rather than from a directory listing, so
+    "the previous run" means the one that actually finished last.
+    """
+    entries = [e for e in read_index(out) if e.get("distributions")]
+    if not entries:
+        return {}
+    latest = dict(entries[-1])
+    latest["current_prompt"] = (
+        config.produced_by.prompt_version if config.produced_by else None
+    )
+    return latest
+
+
 def what_this_run_cannot_tell_you(
     config: RunConfig, modes: Mapping[str, Mode], health: Sequence[JudgeHealth]
 ) -> list[str]:
@@ -337,8 +389,9 @@ def what_this_run_cannot_tell_you(
     free_text = [n for n, s in config.schema.fields.items() if s.kind is FieldKind.FREE_TEXT]
     if free_text:
         lines.append(
-            f"anything about {', '.join(free_text)}\n"
-            "free-text checks and the claim judge arrive at M6; every row is unscored"
+            f"whether {', '.join(free_text)} invented anything, or is filler\n"
+            "cross-field agreement is the only check reading these fields today.\n"
+            "specificity, copy ratio, boilerplate and the claim judge arrive at M6"
         )
     if any(mode >= Mode.LABELLED for mode in modes.values()):
         labelled = sorted(n for n, m in modes.items() if m >= Mode.LABELLED)
@@ -371,6 +424,7 @@ def run(
     stream = stream or sys.stdout
     started = time.perf_counter()
     dataset = load_dataset(config)
+    earlier = previous_run(out, config)
 
     directory = run_directory(out, config.run_id, now=now)
     cache = VerdictCache(directory / "verdicts.jsonl")
@@ -407,17 +461,21 @@ def run(
         elapsed=time.perf_counter() - started,
         collected=[v for v in verdicts if not v.metadata.get("cache_hit")],
         run_yml=config.source,
+        previous=earlier,
     )
     append_index(
         out,
         {
             "run_id": result.run_id,
             "prompt": config.produced_by.prompt_version if config.produced_by else None,
-            "taxonomy": [str(t.ref) for t in config.taxonomies.values()],
-            "taxonomy_hashes": {str(t.ref): t.content_hash for t in config.taxonomies.values()},
+            "taxonomies": {str(t.ref): t.content_hash for t in config.taxonomies.values()},
             "items": len(dataset.items),
             "calls": result.metrics.get("calls"),
             "cost_usd": result.metrics.get("cost_usd"),
+            # What the next run's drift check reads. Written here rather than
+            # recomputed from that run's files, so "the previous run" means
+            # the one that finished last and not the one sorted last.
+            "distributions": result.metrics.get("distributions"),
         },
     )
     return result
@@ -436,6 +494,12 @@ def analyse_run(directory: Path, *, stream: TextIO | None = None) -> RunResult:
     config = load_run(manifest["run_yml"])
     dataset = load_dataset(config)
     verdicts = read_verdicts(directory / "verdicts.jsonl")
+    # The entry before this run's own, so a re-analysis compares against the
+    # same baseline the original run did rather than against itself.
+    entries = [e for e in read_index(directory.parent) if e.get("distributions")]
+    earlier = next(
+        (e for e in reversed(entries) if e.get("run_id") != directory.name), {}
+    )
     # Nothing was collected, so nothing was spent. The verdicts on disk record
     # how they were *obtained* during collection, which is a different
     # question from what this invocation cost.
@@ -448,6 +512,7 @@ def analyse_run(directory: Path, *, stream: TextIO | None = None) -> RunResult:
         elapsed=0.0,
         collected=(),
         run_yml=Path(manifest["run_yml"]),
+        previous=earlier,
     )
 
 
@@ -461,12 +526,24 @@ def _analyse(
     elapsed: float,
     collected: Sequence[Verdict],
     run_yml: Path,
+    previous: Mapping[str, Any] | None = None,
 ) -> RunResult:
     run_id = directory.name
     modes = detect_modes(config, dataset.labels)
     counts = label_counts(config, dataset.labels)
     health = screen(verdicts, config.settings)
-    findings = to_findings(run_id, config, dataset, verdicts)
+
+    check_ctx = CheckContext(
+        run_id=run_id,
+        schema=config.schema,
+        settings=config.settings,
+        items=dataset.items,
+        outputs=dataset.outputs,
+        taxonomies=config.taxonomies,
+        previous=previous or {},
+    )
+    free_findings, skipped = run_checks(check_ctx)
+    findings = [*free_findings, *to_findings(run_id, config, dataset, verdicts)]
     calibrator: Calibrator = IdentityCalibrator()
     risk_rows, strategy_id = build_triage(config, dataset, verdicts, calibrator)
 
@@ -509,15 +586,27 @@ def _analyse(
         "exclusions": dict(dataset.exclusions),
         "ranked": sum(1 for r in risk_rows if r.triage_score is not None),
         "unranked": sum(1 for r in risk_rows if r.triage_score is None),
+        "grains": grain_rates(findings),
+        "distributions": {
+            name: label_shares(check_ctx, name)
+            for name, spec in config.schema.fields.items()
+            if spec.kind is FieldKind.ASSIGNED
+        },
+        "checks_not_run": [
+            {"check": s.check, "field": s.field, "reason": s.reason} for s in skipped
+        ],
     }
 
     cannot = what_this_run_cannot_tell_you(config, modes, health)
     report = render(
         run_id=run_id,
         schema=config.schema,
+        taxonomies=config.taxonomies,
         modes=modes,
         label_counts=counts,
         health=health,
+        findings=findings,
+        skipped=skipped,
         risk_rows=risk_rows,
         verdicts=verdicts,
         items=dataset.items,

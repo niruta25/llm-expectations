@@ -68,14 +68,18 @@ class TestEndToEnd:
         ]
         assert unscored and "abstention" in unscored[0].evidence["reason"]
 
-    def test_free_text_fields_are_unscored_with_a_reason_not_absent(
+    def test_the_free_text_defect_checks_are_unscored_with_a_reason_not_absent(
         self, example, provider, tmp_path
     ):
+        # Cross-field agreement scores `summary` from M2 on, because it is an
+        # item check and belongs to neither kind. The defect checks that are
+        # specific to free text are still unscored, and say which milestone
+        # they wait for rather than quietly not appearing.
         result = execute(example, tmp_path / "out", provider)
-        summary = [f for f in result.findings if f.field == "summary"]
-        assert len(summary) == len(load_dataset(example).outputs)
-        assert all(f.status is Status.UNSCORED for f in summary)
-        assert all("M6" in f.evidence["reason"] for f in summary)
+        defects = [f for f in result.findings if f.field == "summary" and f.check == "free_text"]
+        assert len(defects) == len(load_dataset(example).outputs)
+        assert all(f.status is Status.UNSCORED for f in defects)
+        assert all("M6" in f.evidence["reason"] for f in defects)
 
     def test_an_unreadable_reply_leaves_the_item_unranked_rather_than_clean(
         self, example, provider, tmp_path
@@ -94,7 +98,10 @@ class TestEndToEnd:
         report = execute(example, tmp_path / "out", provider).report
         assert "better than guessing" in report
         assert "Error Recall@Budget" in report
-        assert "summary" in report
+        # And it is specific about free text rather than claiming the field is
+        # untouched — cross-field agreement does read it.
+        assert "invented anything, or is filler" in report
+        assert "cross-field agreement is the only check reading these fields" in report
 
     def test_item_grain_is_never_rosier_than_field_grain(self, example, provider, tmp_path):
         result = execute(example, tmp_path / "out", provider)
@@ -267,3 +274,26 @@ def test_the_run_module_is_not_shadowed_by_a_function_of_the_same_name():
     assert not hasattr(llm_expectations, "run") or isinstance(
         llm_expectations.run, types.ModuleType
     )
+
+
+class TestRunDirectories:
+    """Two runs in one minute must not merge into one."""
+
+    def test_a_second_run_in_the_same_minute_gets_its_own_directory(self, tmp_path):
+        from datetime import datetime, timezone
+
+        from llm_expectations.write import run_directory
+
+        now = datetime(2026, 9, 29, 14, 32, tzinfo=timezone.utc)
+        first = run_directory(tmp_path, "jtbd-p8", now=now)
+        second = run_directory(tmp_path, "jtbd-p8", now=now)
+        assert first != second
+        assert first.name == "2026-09-29_1432_jtbd-p8"
+        assert second.name == "2026-09-29_1432-2_jtbd-p8"
+
+    def test_two_runs_do_not_share_a_verdict_file(self, example, provider, tmp_path):
+        first = execute(example, tmp_path / "out", provider)
+        second = execute(example, tmp_path / "out", provider)
+        assert first.directory != second.directory
+        # Appending into the first run's cache would silently merge two runs.
+        assert len(first.verdicts) == len(second.verdicts)

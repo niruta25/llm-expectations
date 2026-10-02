@@ -27,21 +27,25 @@ against. This tool covers those two kinds of field — **assigned** labels and
 
 ## Status
 
-**Pre-alpha, and it does one thing.** Point a judge at a corpus and get back
-the order a human should open it in — cached to disk, with the judge's own
-health table beside it and every number stamped uncalibrated.
+**Pre-alpha.** The free checks and a triage judge both work.
 
 ```bash
-export ANTHROPIC_API_KEY=...
-llm-expectations plan examples/jtbd/run.yml    # what it will cost, no calls
-llm-expectations run  examples/jtbd/run.yml    # collect and analyse
-llm-expectations analyse out/<run>/            # re-analyse from cache, free
+llm-expectations check examples/jtbd/taxonomy.yml   # static health, no data
+llm-expectations plan  examples/jtbd/run.yml        # what it will cost, no calls
+llm-expectations run   examples/jtbd/run.yml        # collect and analyse
+llm-expectations analyse out/<run>/                 # re-analyse from cache, free
 ```
 
-The free checks arrive at M2, the panel at M3, and the baselines that say
-whether the ranking beats guessing at M4 — until then the report says so
-itself, in a box headed *what this run cannot tell you*. A worked project with
-deliberately planted defects lives in [`examples/jtbd/`][example].
+Free, on every row: is the label real, did it stop at a leaf, is the abstention
+rate inside its band, has one label swallowed the batch, did the distribution
+move since the last run, and does each field agree with the others. Then one
+judge ranks what a human should open first, stamped uncalibrated.
+
+Both grains are reported — an item passes only if every check on it passes —
+and the report closes with a box naming what the run cannot tell you. The panel
+arrives at M3 and the baselines that say whether the ranking beats guessing at
+M4. A worked project with deliberately planted defects lives in
+[`examples/jtbd/`][example].
 
 [example]: https://github.com/niruta25/llm-expectations/tree/main/examples/jtbd
 
@@ -82,8 +86,8 @@ deliberately planted defects lives in [`examples/jtbd/`][example].
 | | | |
 |---|---|---|
 | M0 | skeleton | done |
-| M1 | one judge, end to end | **done** — first shippable |
-| M2 | free checks + full report | |
+| M1 | one judge, end to end | done — first shippable |
+| M2 | free checks + full report | **done** |
 | M3 | panel | |
 | M4 | guardrails + stats | shippable |
 | M5 | labels (Mode 1) | |

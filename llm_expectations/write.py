@@ -34,10 +34,20 @@ __all__ = [
 
 
 def run_directory(out: Path, run_id: str, *, now: datetime | None = None) -> Path:
-    """``out/2026-09-29_1432_jtbd-p8``. The timestamp is added, not asked for."""
+    """``out/2026-09-29_1432_jtbd-p8``, and never an existing one.
+
+    Two runs in the same minute must not share a directory: the second would
+    append its verdicts to the first's cache file and overwrite its report,
+    which silently merges two runs into one. A suffix is added only when that
+    would otherwise happen, so the documented shape is what you normally see.
+    """
     stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d_%H%M")
     directory = out / f"{stamp}_{run_id}"
-    directory.mkdir(parents=True, exist_ok=True)
+    attempt = 2
+    while directory.exists():
+        directory = out / f"{stamp}-{attempt}_{run_id}"
+        attempt += 1
+    directory.mkdir(parents=True)
     return directory
 
 

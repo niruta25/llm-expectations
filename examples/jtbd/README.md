@@ -27,18 +27,26 @@ proves nothing about whether a metric means anything, and the guardrails should
 say so rather than printing a macro F1 off thirteen rows. If this example ever
 reports a confident ranking number, that is a bug in the guardrails.
 
-## What M1 finds here
+## What lands here today
 
 ```bash
 llm-expectations run examples/jtbd/run.yml
 ```
 
-Three of the eight plants — `s-07` sibling confusion, `s-08` too shallow,
-`s-09` invented label — come out at the top of the queue, because a judge shown
-the definitions catches all three. The other five need checks that do not exist
-yet, and `expected.yml` says which milestone each waits for. M1 does not
-pretend to have looked: every unchecked field gets an unscored finding naming
-what is missing, and the report's closing box lists it.
+The free checks catch three plants on their own — `s-08` stopped at a parent,
+`s-09` is not a label at all, and `s-12`'s summary shares no vocabulary with
+its label. Cross-field agreement also fires on `s-11`, whose summary is
+generic enough to fit any session; `expected.yml` records that under
+`also_caught_by`, because it is a real finding and not a false positive.
+
+The triage judge then ranks `s-09`, `s-07` and `s-08` first. `s-07` is the one
+nothing free can reach: `billing.payment_failed` and `billing.card_declined`
+are both real leaves in the same branch, so only a judge or a human label can
+separate them.
+
+Four plants remain unreachable, and the tool says so rather than implying it
+looked. Every unchecked field carries an unscored finding naming what is
+missing, and the report's closing box lists it.
 
 The pair `billing.payment_failed` ↔ `billing.card_declined` is the intended
 fuzzy boundary. `ann-2` disagrees with `ann-1` on exactly that pair in `s-07`
