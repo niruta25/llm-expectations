@@ -65,10 +65,18 @@ plants:
     field: summary
     defect: filler
     caught_by: [specificity]
+    also_caught_by: [cross_field_agreement]
     milestone: M6
     note: >-
       "The customer had a problem and it was resolved" is true of every session
       in the corpus. No rare token from its own item appears in it.
+
+      Cross-field agreement catches it too, from M2, and that is not a false
+      positive — a summary generic enough to fit any session shares no
+      vocabulary with its own label either. `caught_by` names the check that
+      diagnoses the defect; `also_caught_by` records a check that fires on the
+      same row for a related reason, so the manifest stays honest about what
+      the tool actually reports.
 
   - item: s-12
     field: summary
@@ -100,6 +108,17 @@ plants:
       Here so that item grain and field grain differ. s-04 is right on jtbd and
       right on summary, and the item is still not usable. The item number is
       always the worse one, and it is the one a consumer needs.
+
+# The contract the tests enforce, stated once so it is not inferred:
+#
+#   1. No item in `clean` is ever flagged by any check.
+#   2. Every item flagged by any check appears in `plants`.
+#   3. Every plant whose milestone has landed is flagged by a check in its
+#      own `caught_by`.
+#
+# Together those are "flags exactly those — no more, no fewer", with
+# `also_caught_by` the escape valve for a second check that legitimately
+# fires on a planted row.
 
 # Correct behaviour that a check must not mistake for a defect.
 correct_but_unusual:

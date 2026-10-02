@@ -119,7 +119,8 @@ def _plan(args: argparse.Namespace) -> int:
         print(f"  skipped {count:,}: {reason}")
     if plan.unpriced_models:
         print(f"\n  ⚠ no published price for {', '.join(plan.unpriced_models)} — no estimate.")
-    print("\n  No calls were made.")
+    print("\n  No calls were made. The free checks cost nothing and run either way;")
+    print("  this is only what the judge would add.")
     return 0
 
 

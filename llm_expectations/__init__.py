@@ -1,11 +1,14 @@
 """llm-expectations — quality checks for LLM outputs that are judgements *about*
 a document, not values copied *out of* one.
 
-Pre-alpha, and usable for one thing: pointing a judge at a corpus and getting
-back the order a human should open it in. That is M1, the first shippable
-milestone (DESIGN.md §12). The free checks arrive at M2, the panel at M3, the
-baselines that say whether the ranking beats guessing at M4, and the
-operating-point table at M5b.
+Pre-alpha. Two things work: the free checks — label validity, leaf depth,
+abstention rate, label collapse, drift against the last run, and cross-field
+agreement — and a triage judge that ranks what a human should open first.
+Both grains are reported, and the report names what it cannot conclude.
+
+That is M0 through M2 (DESIGN.md §12). The panel arrives at M3, the baselines
+that say whether the ranking beats guessing at M4, and the operating-point
+table at M5b.
 
   - assigned fields   a label chosen from a versioned taxonomy
   - free text fields  a sentence written about the item
@@ -25,6 +28,7 @@ See https://github.com/niruta25/llm-expectations
 from __future__ import annotations
 
 from .calibration import Calibrator, IdentityCalibrator
+from .checks import CheckContext, run_checks
 from .config import ConfigError, RunConfig, Settings, load_run
 from .judges import Judge, JudgeError, LabelCorrectTask
 from .judges.fake import FakeProvider
@@ -53,6 +57,7 @@ __version__ = "0.0.0"
 __all__ = [
     "ABSTAIN",
     "Calibrator",
+    "CheckContext",
     "ConfigError",
     "Exclusion",
     "FakeProvider",
@@ -91,4 +96,5 @@ __all__ = [
     "read_items",
     "read_labels",
     "read_outputs",
+    "run_checks",
 ]
