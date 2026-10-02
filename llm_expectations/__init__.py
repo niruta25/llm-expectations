@@ -21,8 +21,14 @@ measured out of fold, and Error Recall@Budget answers the question a review
 budget actually poses — how many of the errors does opening the first 1%
 actually find — for the judge and every baseline at once.
 
-That is M0 through M5b (DESIGN.md §12), and the library now does what it was
-designed to do. Free text arrives at M6 and cross-run comparison at M7.
+Free text is covered too, and it is cheaper than assigned — the opposite of
+what you would guess. Length, specificity, copy ratio and boilerplate cost
+nothing, and because they catch *content* problems rather than format ones
+they genuinely gate the one expensive check: a judge that splits the text into
+claims and says which the item does not support. An audit sample measures what
+that gate misses instead of assuming it misses nothing.
+
+That is M0 through M6 (DESIGN.md §12). Cross-run comparison arrives at M7.
 
   - assigned fields   a label chosen from a versioned taxonomy
   - free text fields  a sentence written about the item
@@ -50,7 +56,7 @@ from .calibration import (
 from .checks import CheckContext, run_checks
 from .config import ConfigError, RunConfig, Settings, load_run
 from .gates import Gate, Gates, Suppression, gate_one, gate_two
-from .judges import Judge, JudgeError, LabelCorrectTask
+from .judges import ClaimSupportTask, Judge, JudgeError, LabelCorrectTask
 from .judges.fake import FakeProvider
 from .metrics import AgreementReport, FuzzyPair, effective_votes
 from .metrics.classification import Classification, TreeBucket, classify
@@ -84,6 +90,7 @@ __all__ = [
     "AgreementReport",
     "Calibrator",
     "CheckContext",
+    "ClaimSupportTask",
     "Classification",
     "ConfigError",
     "Exclusion",

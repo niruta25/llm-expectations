@@ -253,7 +253,21 @@ def example(no_confirm):
 @pytest.fixture
 def provider(scripted):
     """A judge scripted against the fixture's planted defects."""
-    from llm_expectations.judges.fake import reply
+    from llm_expectations.judges.fake import claims, reply
+
+    def unreadable_label_only(request):
+        """One unreadable reply, on one question.
+
+        Keyed on the prompt shape rather than the item, because s-13 is asked
+        about twice — once for its label and once for its summary's claims.
+        Garbage to both would double the parse-failure rate past the stop
+        ceiling for a reason about the test rather than the judge; and an
+        *assigned*-shaped reply to a claim question is itself unreadable, so
+        the fallback has to answer in the shape it was asked.
+        """
+        if "ASSIGNED LABEL:" in request.user:
+            return "not json at all"
+        return claims(supported=["the text restates the item"])
 
     return scripted(
         rules=(
@@ -261,7 +275,7 @@ def provider(scripted):
             ("year up front", reply(False, 0.74, "billing is a parent, not a leaf")),
             ("reset loop", reply(False, 0.88, "access.login_broken is not permitted")),
             ("Okta", reply("cannot_decide", 0.4, "the item does not say enough")),
-            ("blank panel", "not json at all"),
+            ("blank panel", unreadable_label_only),
         ),
         default=reply(True, 0.92, "the label matches"),
     )

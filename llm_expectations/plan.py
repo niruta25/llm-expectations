@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from .config import RunConfig
+from .config import JudgeSpec, RunConfig
 from .schema import FieldKind
 from .types import Item, Output
 
@@ -114,6 +114,7 @@ def plan_run(
     outputs: Mapping[str, Output],
     *,
     cached_keys: frozenset[str] = frozenset(),
+    free_text: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]] | None = None,
 ) -> Plan:
     """Count the calls M1 would make, and price them.
 
@@ -173,8 +174,55 @@ def plan_run(
         output_tokens=output_tokens,
         usd=usd,
     )
+    jobs = [job]
+    if free_text:
+        jobs.append(_claims_job(config, spec, items, outputs, free_text))
+    unpriced = tuple(sorted({j.model for j in jobs if j.usd is None}))
     return Plan(
-        jobs=(job,),
+        jobs=tuple(jobs),
         skipped={k: v for k, v in skipped.items() if v},
-        unpriced_models=() if usd is not None else (spec.model,),
+        unpriced_models=unpriced,
+    )
+
+
+def _claims_job(
+    config: RunConfig,
+    spec: JudgeSpec,
+    items: Mapping[str, Item],
+    outputs: Mapping[str, Output],
+    free_text: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]],
+) -> PlannedJob:
+    """The claim judge's share: flagged rows plus the audit sample.
+
+    Counted separately from triage because the whole point of the free-text
+    gate is that this number is a fraction of the corpus rather than all of
+    it, and a combined total would hide that.
+    """
+    from .judges.prompts import CLAIM_TOKENS, ClaimSupportTask
+
+    calls = input_tokens = 0
+    budget = max(int(config.settings.value("judge_max_tokens")), CLAIM_TOKENS)
+    for name, (suspicious, audit) in sorted(free_text.items()):
+        field_spec = config.schema[name]
+        task = ClaimSupportTask(
+            style=field_spec.style.value if field_spec.style else "descriptive",
+            max_tokens=budget,
+        )
+        for item_id in (*suspicious, *audit):
+            output = outputs.get(item_id)
+            if output is None or item_id not in items:
+                continue
+            request = task.build(items[item_id], output, name, None)
+            calls += 1
+            input_tokens += (len(request.system) + len(request.user)) // CHARS_PER_TOKEN
+    output_tokens = calls * budget
+    return PlannedJob(
+        job="claims",
+        judge_id=spec.id,
+        model=spec.model,
+        calls=calls,
+        cached=0,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        usd=estimate_cost(spec.model, input_tokens, output_tokens),
     )

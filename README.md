@@ -27,9 +27,9 @@ against. This tool covers those two kinds of field — **assigned** labels and
 
 ## Status
 
-**Pre-alpha, and feature-complete for assigned labels.** Both gates, human
-answers grading the model and its judges, a fitted calibration, and the
-operating-point table a review budget actually needs.
+**Pre-alpha, and covering both kinds of field.** Both gates, human answers
+grading the model and its judges, a fitted calibration, the operating-point
+table a review budget needs, and free text.
 
 ```bash
 llm-expectations check examples/jtbd/taxonomy.yml   # static health, no data
@@ -40,34 +40,42 @@ llm-expectations triage-eval out/<run>/             # the table alone, free
 ```
 
 ```
-  ┌ GATES ─────────────────────────────────────────────────────────────┐
-  │  ✓ measurement is sound       PASS                                  │
-  │  ✓ judge beats baselines      PASS                                  │
-  └─────────────────────────────────────────────────────────────────────┘
+  ── summary ────────────────────────────────── free_text · descriptive ──
 
-  CALIBRATION
-    jtbd         n=1200   ECE 0.002 ✓   Brier 0.057 vs 0.145 base rate
-      quality measured out of fold over 5 folds
+  free checks
+    length in bounds              100.0%   ✓
+    specific, not filler           92.3%   ✗  1 of 13 failed
+      s-11     nothing here is specific to this item
+    copy ratio                     92.3%   ✗  1 of 13 failed
+      s-13     28 of 28 words are one lifted run
+    boilerplate                    0 of 13   ✓  near-identical
+    agrees with other fields       81.8%   ✗  2 of 11 failed
 
-  OPERATING POINT   Error Recall@Budget
-    312 known errors in 1200 labelled items
+  judge
+    claims the item supports       92.3%   ✗  1 of 13 failed
+      s-10     1 invented: 'we issued a refund of $49'
 
-    strategy             budget  reviewed   found   recall   wasted
-    calibrated_risk       1.0%        12       8     2.6%    31.6%  ← the judge
-    calibrated_risk      20.0%       240     164    52.6%    31.6%
-    panel_disagreement    1.0%        12       7     2.3%    39.2%
-    random                1.0%        12       3     1.0%    75.0%
+  FREE-TEXT GATE
+    summary                3 flagged by a free check, 10 audited
+    of the flagged rows       33% had an unsupported claim
+    1 of 10 audited rows that no free check flagged turned out to have an
+    unsupported claim. That is what the free gate is missing, measured
+    rather than assumed.
 ```
 
-Every number carries what it has to beat, and nothing claims more than it
-earned. Calibration quality is measured **out of fold** — fitting on a
-hundred rows and reporting how well the fit scores those same hundred rows is
-in-sample performance wearing a lab coat. A calibration fitted against one
-prompt version refuses to be reused against another. And because a Platt
-curve is monotone, the report says plainly when a calibration bought you
-meaningful probabilities but *not* a better ordering.
+Free text is **cheaper** than assigned, which is the opposite of what you
+would guess. The assigned free checks catch format problems, so a
+well-formed wrong label sails through and the judge has to see everything.
+The free-text checks catch *content* problems, so they genuinely gate the
+expensive call — and the audit sample measures what the gate misses instead
+of assuming it misses nothing.
 
-A worked project with deliberately planted defects lives in
+Every number carries what it has to beat, and nothing claims more than it
+earned. Calibration quality is measured out of fold. A calibration fitted
+against one prompt version refuses to be reused against another. A wide
+interval is reported as no result rather than hidden.
+
+A worked project with eight deliberately planted defects lives in
 [`examples/jtbd/`][example]; at thirteen items it correctly *fails* Gate 2 and
 fits no calibration, which is what a fixture that size should do.
 
@@ -115,8 +123,8 @@ fits no calibration, which is what a fixture that size should do.
 | M3 | panel | done |
 | M4 | guardrails + stats | done — shippable |
 | M5 | labels (Mode 1) | done |
-| M5b | calibration + triage evaluation | **done** — shippable |
-| M6 | free text | shippable |
+| M5b | calibration + triage evaluation | done — shippable |
+| M6 | free text | **done** — shippable |
 | M7 | across runs | |
 | M8 | polish | |
 

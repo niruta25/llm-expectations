@@ -68,17 +68,39 @@ class TestEndToEnd:
         # specific to free text are still unscored, and say which milestone
         # they wait for rather than quietly not appearing.
         result = execute(example, tmp_path / "out", provider)
+        # Rows nothing flagged, and that the audit did not pick, are not
+        # judged — and say that rather than quietly not appearing.
         defects = [f for f in result.findings if f.field == "summary" and f.check == "free_text"]
-        assert len(defects) == len(load_dataset(example).outputs)
+        assert defects
         assert all(f.status is Status.UNSCORED for f in defects)
-        assert all("M6" in f.evidence["reason"] for f in defects)
+        assert all("no claim judge was paid for it" in f.evidence["reason"] for f in defects)
 
-    def test_an_unreadable_reply_leaves_the_item_unranked_rather_than_clean(
+    def test_an_item_with_nothing_readable_stays_unranked(self, example, tmp_path, scripted):
+        # An unreadable reply contributes no score. An item where *every*
+        # reply was unreadable has no place in the order, and must not be
+        # sorted among the clean ones for want of a number.
+        def garbage(request):
+            return "not json at all" if "Lena" in request.user else reply(True, 0.9, "fine")
+
+        # Both shapes, because the fake answers a claim question in claim
+        # shape unless told otherwise.
+        provider = scripted(default=garbage, claim_default=garbage)
+        result = execute(example, tmp_path / "out", provider)
+        unranked = {row.item_id for row in result.risk_rows if row.triage_score is None}
+        assert "s-13" in unranked
+
+    def test_an_unreadable_reply_adds_no_score_of_its_own(
         self, example, provider, tmp_path
     ):
         result = execute(example, tmp_path / "out", provider)
-        unranked = {row.item_id for row in result.risk_rows if row.triage_score is None}
-        assert "s-13" in unranked  # its only judged field came back as prose
+        unreadable = [
+            v
+            for v in result.verdicts
+            if v.metadata.get("reply") == "unparseable"
+        ]
+        assert unreadable
+        assert all(v.status is Status.UNSCORED for v in unreadable)
+        assert all(v.raw_confidence is None for v in unreadable)
 
     def test_the_report_leads_with_the_uncalibrated_stamp(self, example, provider, tmp_path):
         report = execute(example, tmp_path / "out", provider).report
@@ -335,13 +357,18 @@ class TestPanel:
     def test_every_member_is_asked_the_byte_identical_prompt(
         self, example, tmp_path, three_judges
     ):
-        # Otherwise panel disagreement measures prompt differences, not judges.
+        # Otherwise panel disagreement measures prompt differences, not
+        # judges. Compared over the panel's own question only: the triage
+        # judge also does claim support, which the others are never asked.
         self.run_panel(example, tmp_path, three_judges)
         prompts = {
-            judge_id: {(r.system, r.user) for r in provider.calls}
+            judge_id: {
+                (r.system, r.user) for r in provider.calls if "ASSIGNED LABEL:" in r.user
+            }
             for judge_id, provider in three_judges.items()
         }
         first = next(iter(prompts.values()))
+        assert first
         assert all(seen == first for seen in prompts.values())
 
     def test_a_panel_finding_shows_the_votes_and_quotes_the_dissent(
@@ -561,3 +588,121 @@ class TestTheManifestCoversTheWholePipeline:
             if f.item_id == "s-13" and f.field == "jtbd" and f.check == "label_tree_bucket"
         ]
         assert rows and all(f.status is Status.UNSCORED for f in rows)
+
+
+def test_no_finding_is_emitted_twice_for_one_row_and_check():
+    """Two builders both producing a row would double it in the grain rates."""
+    import dataclasses
+    import tempfile
+    from pathlib import Path
+
+    from llm_expectations.config import Budget, load_run
+    from llm_expectations.judges.fake import FakeProvider, claims
+    from llm_expectations.judges.fake import reply as fake_reply
+
+    from .conftest import EXAMPLE
+
+    def answer(request):
+        if "ASSIGNED LABEL:" in request.user:
+            return fake_reply(True, 0.9, "matches")
+        return claims(supported=["a"], unsupported=["b"])
+
+    config = load_run(EXAMPLE / "run.yml")
+    config = dataclasses.replace(
+        config,
+        budget=Budget(None, False),
+        settings=type(config.settings)(
+            project={**config.settings.project, "free_text_audit_rate": 1.0}
+        ),
+    )
+    result = run(
+        config,
+        out=Path(tempfile.mkdtemp()),
+        provider_factory=lambda spec: FakeProvider(
+            model="m", default=answer, claim_default=answer
+        ),
+    )
+    seen = [(f.check, f.item_id, f.field) for f in result.findings if f.item_id]
+    assert len(seen) == len(set(seen))
+
+
+class TestTheWholeFixtureIsAccountedFor:
+    """The acceptance test, now that every milestone's checks exist.
+
+    Eight planted defects, each caught by the check the manifest says owns
+    it, and not one clean item flagged by anything.
+    """
+
+    @staticmethod
+    def everything(tmp_path):
+        import dataclasses
+
+        from llm_expectations.config import Budget, load_run
+        from llm_expectations.judges.fake import FakeProvider, claims
+        from llm_expectations.judges.fake import reply as fake_reply
+
+        from .conftest import EXAMPLE
+
+        suggestions = {
+            "fraud alert": ("billing.card_declined", "the issuer refused the card"),
+            "year up front": ("billing.refund_request", "stopped at a parent"),
+            "reset loop": ("access.password_reset", "not a permitted label"),
+        }
+
+        def answer(request):
+            if "ASSIGNED LABEL:" in request.user:
+                for needle, (instead, why) in suggestions.items():
+                    if needle in request.user:
+                        return fake_reply(False, 0.85, why, instead=instead)
+                return fake_reply(True, 0.9, "the label matches")
+            if "issued a refund" in request.user:
+                return claims(
+                    supported=["her Amex was declined at renewal"],
+                    unsupported=["we issued a refund of $49"],
+                )
+            return claims(supported=["the text restates the item"])
+
+        config = load_run(EXAMPLE / "run.yml")
+        config = dataclasses.replace(
+            config,
+            budget=Budget(None, False),
+            # A full audit, because `reached_by: audit` plants are only asked
+            # about when the sample picks them.
+            settings=type(config.settings)(
+                project={**config.settings.project, "free_text_audit_rate": 1.0}
+            ),
+        )
+        return run(
+            config,
+            out=tmp_path / "out",
+            provider_factory=lambda spec: FakeProvider(
+                model="m", default=answer, claim_default=answer
+            ),
+        )
+
+    @staticmethod
+    def manifest():
+        import yaml
+
+        from .conftest import EXAMPLE
+
+        return yaml.safe_load((EXAMPLE / "expected.yml").read_text())
+
+    def test_every_plant_is_caught_by_the_check_that_owns_it(self, tmp_path):
+        result = self.everything(tmp_path)
+        failed = {(f.item_id, f.check) for f in result.findings if f.status is Status.FAIL}
+        for plant in self.manifest()["plants"]:
+            assert any((plant["item"], check) in failed for check in plant["caught_by"]), (
+                f"{plant['item']} ({plant['defect']}) was not caught by {plant['caught_by']}"
+            )
+
+    def test_not_one_clean_item_is_flagged(self, tmp_path):
+        result = self.everything(tmp_path)
+        flagged = {f.item_id for f in result.findings if f.status is Status.FAIL and f.item_id}
+        assert not flagged & set(self.manifest()["clean"])
+
+    def test_every_flagged_item_was_planted(self, tmp_path):
+        result = self.everything(tmp_path)
+        flagged = {f.item_id for f in result.findings if f.status is Status.FAIL and f.item_id}
+        planted = {plant["item"] for plant in self.manifest()["plants"]}
+        assert flagged <= planted, f"unaccounted: {sorted(flagged - planted)}"

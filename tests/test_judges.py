@@ -297,3 +297,115 @@ class TestScreening:
         health = screen(self._verdicts([Status.UNSCORED] * 5, outcome="unparseable"), settings)[0]
         assert health.approval_rate is None
         assert health.excluded_from_panel
+
+
+class TestClaimSupport:
+    """The one defect a free check cannot reach."""
+
+    ITEM = Item(
+        "s-1",
+        "Maya wrote in March 3. Her card ending 4471 was declined when the "
+        "subscription auto-renewed. She gave us a different card and the $49 "
+        "charge went through.",
+    )
+
+    def _task(self, style="descriptive"):
+        from llm_expectations.judges.prompts import ClaimSupportTask
+
+        return ClaimSupportTask(style=style)
+
+    def test_the_designs_worked_example_produces_its_stated_answer(self):
+        from llm_expectations.judges.fake import claims
+
+        parsed = self._task().parse(
+            claims(
+                supported=["her card was declined"],
+                unsupported=["we issued a refund of $49"],
+            )
+        )
+        assert parsed.status is Status.FAIL
+        assert parsed.detail["support_rate"] == 0.5
+        assert parsed.detail["unsupported"] == ["we issued a refund of $49"]
+
+    def test_the_claim_list_rides_back_so_a_reviewer_sees_the_sentence(self):
+        from llm_expectations.judges.fake import claims
+
+        parsed = self._task().parse(claims(unsupported=["we refunded $49"]))
+        assert parsed.detail["claims"][0]["claim"] == "we refunded $49"
+
+    def test_all_supported_passes(self):
+        from llm_expectations.judges.fake import claims
+
+        parsed = self._task().parse(claims(supported=["a", "b"]))
+        assert parsed.status is Status.PASS
+        assert parsed.detail["support_rate"] == 1.0
+
+    def test_confidence_reads_in_the_same_direction_as_every_other_verdict(self):
+        from llm_expectations.judges.fake import claims
+
+        clean = self._task().parse(claims(supported=["a", "b", "c", "d"]))
+        dirty = self._task().parse(claims(unsupported=["a", "b", "c", "d"]))
+        # Higher means more sure of what it just said, both ways.
+        assert clean.raw_confidence == 1.0
+        assert dirty.raw_confidence == 1.0
+
+    @pytest.mark.parametrize("text", ["", "sure", "{broken", '{"claims": []}', '{"claims": 3}'])
+    def test_an_unreadable_reply_is_unscored_not_defaulted(self, text):
+        parsed = self._task().parse(text)
+        assert parsed.status is Status.UNSCORED
+        assert parsed.outcome is ReplyOutcome.UNPARSEABLE
+
+    def test_a_missing_note_rides_along_when_offered(self):
+        from llm_expectations.judges.fake import claims
+
+        parsed = self._task().parse(
+            claims(supported=["a"], missing="the charge eventually went through")
+        )
+        assert "eventually went through" in parsed.detail["missing"]
+
+    def test_a_descriptive_field_is_asked_to_split_into_claims(self):
+        request = self._task("descriptive").build(
+            self.ITEM, Output("s-1", {"summary": "x"}), "summary", None
+        )
+        assert "separate factual claims" in request.system
+
+    def test_a_judgement_is_asked_once_and_told_not_to_split(self):
+        request = self._task("judgement").build(
+            self.ITEM, Output("s-1", {"verdict": "resolved first contact"}), "verdict", None
+        )
+        assert "Do not split it up" in request.system
+
+    def test_a_proposal_is_not_grounded_in_the_item_at_all(self):
+        # Asking whether the item *states* a next action would fail every
+        # single one: a proposal is by definition not in the record yet.
+        request = self._task("proposal").build(
+            self.ITEM, Output("s-1", {"next": "confirm the new card is default"}), "next", None
+        )
+        assert "about the future" in request.system
+        assert "follows" in request.system
+
+    def test_the_budget_is_bigger_than_an_assigned_verdict_needs(self):
+        from llm_expectations.judges.prompts import CLAIM_TOKENS
+
+        assert CLAIM_TOKENS > LabelCorrectTask().max_tokens
+
+
+class TestTheFakeAnswersEachTaskInItsOwnShape:
+    def test_a_claim_question_gets_a_claim_reply_by_default(self):
+        from llm_expectations.judges.prompts import ClaimSupportTask
+
+        provider = FakeProvider(default=reply(True, 0.9, "fine"))
+        request = ClaimSupportTask().build(
+            Item("s-1", "the card was declined"), Output("s-1", {"summary": "declined"}),
+            "summary", None,
+        )
+        # An assigned-shaped reply to a claim question is unreadable, and a
+        # judge screened out for that is screened out for a fault in the test.
+        parsed = ClaimSupportTask().parse(provider.complete(request).text)
+        assert parsed.outcome is ReplyOutcome.ANSWERED
+
+    def test_an_assigned_question_still_gets_an_assigned_reply(self, taxonomy):
+        provider = FakeProvider(default=reply(False, 0.7, "wrong"))
+        request = LabelCorrectTask().build(ITEM, OUTPUT, "jtbd", taxonomy)
+        parsed = LabelCorrectTask().parse(provider.complete(request).text)
+        assert parsed.status is Status.FAIL

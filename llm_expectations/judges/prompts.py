@@ -35,12 +35,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from ..taxonomy import Taxonomy
 from ..types import ABSTAIN, Item, Output, Status
 from .base import JudgeRequest, ParsedReply, ReplyOutcome
 
-__all__ = ["LabelCorrectTask"]
+__all__ = ["CLAIM_TOKENS", "ClaimSupportTask", "LabelCorrectTask"]
 
 _SYSTEM = """You are checking a label another system assigned to an item.
 Decide whether the label is correct.
@@ -181,3 +182,150 @@ def label_is_judgeable(output: Output, field: str) -> bool:
     """
     value = output.get(field)
     return not (value is None or value == ABSTAIN or str(value).strip() == "")
+
+
+_CLAIMS_SYSTEM = """You are checking a short text written about an item, against the item itself.
+
+Split the text into its separate factual claims. For each one, decide whether the
+item supports it. A claim the item neither states nor implies is NOT supported,
+even if it sounds plausible.
+
+Do not judge style, length or word choice. Only whether each claim is grounded.
+
+Reply with one JSON object and nothing else:
+{{"claims": [{{"claim": "<quoted from the text>", "supported": true | false}}],
+ "missing": "<one important thing the item says that the text leaves out, or empty>"}}"""
+
+_JUDGEMENT_SYSTEM = """You are checking a conclusion drawn about an item, against the item itself.
+
+This is one judgement, not a list of facts. Do not split it up. Decide whether the
+item supports the conclusion as a whole.
+
+Reply with one JSON object and nothing else:
+{{"claims": [{{"claim": "<the conclusion>", "supported": true | false}}],
+ "missing": "<one important thing the item says that the conclusion ignores, or empty>"}}"""
+
+_PROPOSAL_SYSTEM = """You are checking a proposed next step written about an item.
+
+A proposal is about the future, so it is not something the item can state. Do not
+check whether the item says it. Decide whether it *follows* from what the item
+says — whether a reasonable person reading the item would arrive at it.
+
+Reply with one JSON object and nothing else:
+{{"claims": [{{"claim": "<the proposal>", "supported": true | false}}],
+ "missing": "<something in the item the proposal overlooks, or empty>"}}"""
+
+_CLAIMS_USER = """ITEM:
+{text}
+
+TEXT:
+{written}"""
+
+#: A claim list does not fit in the sixty tokens an assigned verdict needs.
+CLAIM_TOKENS = 250
+
+_STYLE_PROMPTS = {
+    "descriptive": _CLAIMS_SYSTEM,
+    "judgement": _JUDGEMENT_SYSTEM,
+    "proposal": _PROPOSAL_SYSTEM,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimSupportTask:
+    """Does the item actually support what was written about it?
+
+    The one defect a free check cannot reach. Four of the five ways a summary
+    goes bad — wrong length, filler, pasting, contradicting another field —
+    are caught for nothing. "Made up" is not, and it is the one that matters
+    most, so it is worth paying for.
+
+    ``style`` decides the question, because the three kinds of free text are
+    grounded differently (DESIGN.md §8):
+
+        descriptive   many small facts  — split into claims, check each
+        judgement     one conclusion    — do not split; ask once
+        proposal      about the future  — do not ground it at all; ask
+                                          whether it follows from the facts
+
+    Asking a proposal whether the item *states* it would fail every single
+    one, because a next action is by definition not in the record yet.
+
+    The budget is larger than the assigned judge's — a claim list does not
+    fit in sixty tokens — and the list rides back in ``detail`` so a reviewer
+    sees which sentence was invented rather than a score.
+    """
+
+    check_id: str = "claims_supported"
+    max_tokens: int = CLAIM_TOKENS
+    style: str = "descriptive"
+
+    def build(
+        self, item: Item, output: Output, field: str, taxonomy: Taxonomy | None
+    ) -> JudgeRequest:
+        written = output.get(field)
+        return JudgeRequest(
+            system=_STYLE_PROMPTS.get(self.style, _CLAIMS_SYSTEM).format(),
+            user=_CLAIMS_USER.format(text=item.text, written=written),
+            max_tokens=self.max_tokens,
+            temperature=0.0,
+        )
+
+    def parse(self, text: str) -> ParsedReply:
+        match = _JSON.search(text or "")
+        if match is None:
+            return _unreadable("no JSON object in the reply")
+        try:
+            payload = json.loads(match.group(0))
+        except json.JSONDecodeError as exc:
+            return _unreadable(f"the JSON object did not parse: {exc.msg}")
+        if not isinstance(payload, dict):
+            return _unreadable("the reply was JSON but not an object")
+
+        raw = payload.get("claims")
+        if not isinstance(raw, list) or not raw:
+            return _unreadable("'claims' was missing or empty")
+
+        claims: list[dict[str, Any]] = []
+        for entry in raw:
+            if not isinstance(entry, dict) or "supported" not in entry:
+                continue
+            claims.append(
+                {
+                    "claim": str(entry.get("claim", "")).strip(),
+                    "supported": bool(entry.get("supported")),
+                }
+            )
+        if not claims:
+            return _unreadable("no claim carried a 'supported' verdict")
+
+        unsupported = [c["claim"] for c in claims if not c["supported"]]
+        rate = 1.0 - len(unsupported) / len(claims)
+        missing = str(payload.get("missing") or "").strip()
+        return ParsedReply(
+            outcome=ReplyOutcome.ANSWERED,
+            # The threshold decides pass or fail, not the judge. This status
+            # records only whether anything at all was ungrounded; the
+            # finding applies `min_claim_support` to the rate.
+            status=Status.PASS if not unsupported else Status.FAIL,
+            # Read in the same direction as every other verdict: higher
+            # confidence means more sure of what it just said.
+            raw_confidence=rate if not unsupported else 1.0 - rate,
+            reason=(
+                f"{len(unsupported)} of {len(claims)} claims are not supported by the item"
+                if unsupported
+                else f"all {len(claims)} claims are supported"
+            ),
+            detail={
+                "claims": claims,
+                "unsupported": unsupported,
+                "support_rate": rate,
+                **({"missing": missing} if missing else {}),
+            },
+        )
+
+
+def free_text_is_judgeable(output: Output, field: str) -> bool:
+    """Is there anything here for a judge to ground?"""
+    value = output.get(field)
+    return isinstance(value, str) and bool(value.strip())

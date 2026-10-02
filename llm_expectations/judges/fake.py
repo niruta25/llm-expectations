@@ -12,12 +12,13 @@ triage, report — without spending anything.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from .base import JudgeError, JudgeReply, JudgeRequest
 
-__all__ = ["FakeProvider", "reply"]
+__all__ = ["FakeProvider", "claims", "reply"]
 
 
 def reply(
@@ -33,6 +34,25 @@ def reply(
     return f'{{"correct": {value}, "confidence": {shown}, "reason": "{reason}"{suggestion}}}'
 
 
+def claims(
+    supported: Sequence[str] = (),
+    unsupported: Sequence[str] = (),
+    missing: str = "",
+) -> str:
+    """Build a well-formed claim-support reply."""
+    entries = [{"claim": c, "supported": True} for c in supported]
+    entries += [{"claim": c, "supported": False} for c in unsupported]
+    if not entries:
+        entries = [{"claim": "the text restates the item", "supported": True}]
+    return json.dumps({"claims": entries, "missing": missing})
+
+
+#: How a claim-support prompt is told apart from an assigned-label one. The
+#: fake sees exactly what a provider sees — a system and a user string — so it
+#: has to recognise the task the same way, from the prompt itself.
+CLAIM_MARKER = "\n\nTEXT:\n"
+
+
 @dataclass
 class FakeProvider:
     """Answers from a script, matched against the prompt it is given.
@@ -41,17 +61,29 @@ class FakeProvider:
     prompt wins. ``default`` answers everything else. A rule whose value is a
     callable is given the request, which is how a test scripts a provider that
     fails, or one whose behaviour depends on what it was asked.
+
+    ``claim_default`` answers claim-support prompts, which are a different
+    question with a different reply shape. Without it a fake scripted for
+    assigned labels would return ``{"correct": ...}`` to a claim request, the
+    parser would rightly call that unreadable, and the judge would be
+    screened out for a fault in the test rather than in the judge.
     """
 
     model: str = "fake-instruct"
     id: str = "fake"
     rules: Sequence[tuple[str, str | Callable[[JudgeRequest], str]]] = ()
     default: str | Callable[[JudgeRequest], str] = field(default_factory=lambda: reply(True))
+    claim_default: str | Callable[[JudgeRequest], str] | None = None
     calls: list[JudgeRequest] = field(default_factory=list)
 
     def complete(self, request: JudgeRequest) -> JudgeReply:
         self.calls.append(request)
-        answer = self.default
+        asking_about_claims = CLAIM_MARKER in request.user
+        answer: str | Callable[[JudgeRequest], str]
+        if asking_about_claims:
+            answer = self.claim_default if self.claim_default is not None else claims()
+        else:
+            answer = self.default
         for needle, scripted in self.rules:
             if needle in request.user:
                 answer = scripted

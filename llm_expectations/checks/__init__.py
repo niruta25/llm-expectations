@@ -7,7 +7,7 @@ answers which checks read that kind.
 
 from __future__ import annotations
 
-from . import assigned, corpus, item  # noqa: F401 — imported for registration
+from . import assigned, corpus, free_text, item  # noqa: F401 — imported for registration
 from .base import CheckContext, CheckSpec, Skipped, checks_for, run_checks
 from .corpus import label_shares
 

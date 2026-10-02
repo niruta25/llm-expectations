@@ -59,12 +59,25 @@ plants:
     defect: invented_claim
     output_claim: "we issued a refund of $49"
     caught_by: [claims_supported]
+    reached_by: audit
     milestone: M6
     note: >-
       The label is right and the summary is specific, fluent and the correct
       length. Nothing free catches it; it needs the claim judge. The producing
       model reported 0.88 confidence, which is the point — a raw confidence is
       a feeling, not a probability of error.
+
+      `reached_by: audit` is the honest part. The free-text gate decides which
+      rows are worth paying a judge for, and it does not flag this one —
+      correctly, since every free check passes. So at the default 5% audit
+      rate it is only judged if the sample happens to pick it, and on a
+      thirteen-item corpus it does not.
+
+      That is not a bug in the gate; it is the gate's cost, and the audit
+      sample is how the report measures it instead of asserting the gate is
+      complete. The acceptance test for this plant raises the audit rate to
+      1.0, which tests what the check is for: that the claim judge finds an
+      invented sentence when it is asked about one.
 
   - item: s-11
     field: summary
@@ -123,7 +136,9 @@ plants:
 #   1. No item in `clean` is ever flagged by any check.
 #   2. Every item flagged by any check appears in `plants`.
 #   3. Every plant whose milestone has landed is flagged by a check in its
-#      own `caught_by`.
+#      own `caught_by`. A plant marked `reached_by: audit` is only asked
+#      about when the audit sample picks it, so its test raises the audit
+#      rate rather than relying on the free gate to flag it.
 #
 # Together those are "flags exactly those — no more, no fewer", with
 # `also_caught_by` the escape valve for a second check that legitimately
