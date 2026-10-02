@@ -27,18 +27,21 @@ against. This tool covers those two kinds of field — **assigned** labels and
 
 ## Status
 
-**Pre-alpha.** The skeleton is in place. A project — items, outputs, schema,
-taxonomy, judges, settings — loads and validates in Python, and a worked
-example with deliberately planted defects lives in [`examples/jtbd/`][example].
-Nothing calls a model and no checks run yet; that starts at M1.
+**Pre-alpha, and it does one thing.** Point a judge at a corpus and get back
+the order a human should open it in — cached to disk, with the judge's own
+health table beside it and every number stamped uncalibrated.
 
-```python
-from llm_expectations import load_run
-
-config = load_run("examples/jtbd/run.yml")
-config.settings.resolve("max_words", config.schema["summary"])
-# Resolved(value=30, source='schema.yml:summary')
+```bash
+export ANTHROPIC_API_KEY=...
+llm-expectations plan examples/jtbd/run.yml    # what it will cost, no calls
+llm-expectations run  examples/jtbd/run.yml    # collect and analyse
+llm-expectations analyse out/<run>/            # re-analyse from cache, free
 ```
+
+The free checks arrive at M2, the panel at M3, and the baselines that say
+whether the ranking beats guessing at M4 — until then the report says so
+itself, in a box headed *what this run cannot tell you*. A worked project with
+deliberately planted defects lives in [`examples/jtbd/`][example].
 
 [example]: https://github.com/niruta25/llm-expectations/tree/main/examples/jtbd
 
@@ -78,8 +81,8 @@ config.settings.resolve("max_words", config.schema["summary"])
 
 | | | |
 |---|---|---|
-| M0 | skeleton | **done** |
-| M1 | one judge, end to end | first shippable |
+| M0 | skeleton | done |
+| M1 | one judge, end to end | **done** — first shippable |
 | M2 | free checks + full report | |
 | M3 | panel | |
 | M4 | guardrails + stats | shippable |

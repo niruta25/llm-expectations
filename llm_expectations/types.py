@@ -193,10 +193,15 @@ class RiskRow:
     ``calibrated`` is not decoration. An uncalibrated score is a ranking by a
     number the model emitted, which is not a probability of error, and every
     number derived from it is stamped as such.
+
+    ``triage_score`` is ``None`` when the judge could not decide or its reply
+    could not be read. Such an item still gets a row — leaving it out is how
+    the unjudged items get forgotten — but it has no place in the order, and
+    inventing one for it would be the third-state failure in miniature.
     """
 
     item_id: str
-    triage_score: float
+    triage_score: float | None
     strategy: str
     calibrated: bool
     raw_confidence_mean: float | None = None
