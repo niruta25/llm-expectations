@@ -297,3 +297,169 @@ class TestRunDirectories:
         assert first.directory != second.directory
         # Appending into the first run's cache would silently merge two runs.
         assert len(first.verdicts) == len(second.verdicts)
+
+
+class TestPanel:
+    """The panel measures. The tests below pin what it is not allowed to do."""
+
+    @pytest.fixture
+    def three_judges(self):
+        from llm_expectations.judges.fake import FakeProvider
+
+        strict = FakeProvider(
+            model="strict-1",
+            rules=(
+                ("fraud alert", reply(False, 0.85, "the issuer refused it",
+                                      instead="billing.card_declined")),
+                ("Amex was declined", reply(False, 0.7, "reads as a payment failure",
+                                            instead="billing.payment_failed")),
+            ),
+            default=reply(True, 0.9, "matches"),
+        )
+        middling = FakeProvider(
+            model="middling-1",
+            rules=(
+                ("fraud alert", reply(False, 0.6, "the bank refused it",
+                                      instead="billing.card_declined")),
+                ("Okta", reply("cannot_decide", 0.4, "not enough detail")),
+            ),
+            default=reply(True, 0.88, "fine"),
+        )
+        soft = FakeProvider(model="soft-1", default=reply(True, 0.95, "looks fine"))
+        return {"judge-a": strict, "judge-b": soft, "judge-c": middling}
+
+    def run_panel(self, example, tmp_path, three_judges, **kw):
+        return run(
+            example,
+            out=tmp_path / "out",
+            provider_factory=lambda spec: three_judges[spec.id],
+            **kw,
+        )
+
+    def test_every_member_is_asked_the_byte_identical_prompt(
+        self, example, tmp_path, three_judges
+    ):
+        # Otherwise panel disagreement measures prompt differences, not judges.
+        self.run_panel(example, tmp_path, three_judges)
+        prompts = {
+            judge_id: {(r.system, r.user) for r in provider.calls}
+            for judge_id, provider in three_judges.items()
+        }
+        first = next(iter(prompts.values()))
+        assert all(seen == first for seen in prompts.values())
+
+    def test_a_panel_finding_shows_the_votes_and_quotes_the_dissent(
+        self, example, tmp_path, three_judges
+    ):
+        result = self.run_panel(example, tmp_path, three_judges)
+        panel = [f for f in result.findings if f.check == "label_correct_panel"]
+        assert panel
+        # A real split: two judges that both decided, and decided differently.
+        # `correct` against `cannot_decide` is not dissent — an abstention is
+        # not a vote, and quoting one as a dissenting opinion would be the
+        # panel inventing disagreement.
+        split = next(
+            f
+            for f in panel
+            if len({v for v in f.evidence["votes"].values() if v in {"correct", "incorrect"}}) > 1
+        )
+        assert split.evidence["dissent"]
+        assert split.evidence["agreement"]
+
+    def test_excluding_a_judge_can_leave_every_split_a_tie_and_it_says_so(
+        self, example, tmp_path, three_judges
+    ):
+        # Dropping the rubber stamp leaves two voters, so a disagreement is
+        # 1-1: unscored, not a pass. That is the honest consequence of a
+        # three-judge panel with one broken member, and it is an argument for
+        # replacing the judge rather than for breaking the tie.
+        result = self.run_panel(example, tmp_path, three_judges)
+        panel = [f for f in result.findings if f.check == "label_correct_panel"]
+        tied = [f for f in panel if "tied" in f.evidence["agreement"]]
+        assert tied
+        assert all(f.status is Status.UNSCORED for f in tied)
+
+    def test_an_abstention_is_never_quoted_as_dissent(
+        self, example, tmp_path, three_judges
+    ):
+        result = self.run_panel(example, tmp_path, three_judges)
+        for found in result.findings:
+            if found.check != "label_correct_panel":
+                continue
+            abstained = {
+                j for j, vote in found.evidence["votes"].items() if vote == "cannot_decide"
+            }
+            assert not (abstained & set(found.evidence["dissent"]))
+
+    def test_the_panel_never_feeds_the_ranking(self, example, tmp_path, three_judges):
+        # The first of the three things DESIGN.md §6 says it must not do.
+        # Only the triage judge's verdicts may move an item up the queue.
+        result = self.run_panel(example, tmp_path, three_judges)
+        triage_only = run(
+            example,
+            out=tmp_path / "solo",
+            provider_factory=lambda spec: three_judges["judge-a"],
+        )
+        with_panel = {r.item_id: r.triage_score for r in result.risk_rows}
+        without = {r.item_id: r.triage_score for r in triage_only.risk_rows}
+        assert with_panel == without
+
+    def test_unanimity_is_not_treated_as_proof(self, example, tmp_path, three_judges):
+        # A unanimous pass is still only a pass on the panel check; it does
+        # not short-circuit anything else or mark the item exempt.
+        result = self.run_panel(example, tmp_path, three_judges)
+        unanimous = [
+            f
+            for f in result.findings
+            if f.check == "label_correct_panel"
+            and set(f.evidence["votes"].values()) == {"correct"}
+        ]
+        assert unanimous
+        flagged = {f.item_id for f in result.findings if f.status is Status.FAIL}
+        # s-09's label is invented; the panel agreeing cannot clear it.
+        assert "s-09" in flagged
+
+    def test_a_rubber_stamp_is_dropped_from_the_vote_but_kept_on_disk(
+        self, example, tmp_path, three_judges
+    ):
+        result = self.run_panel(example, tmp_path, three_judges)
+        panel = result.metrics["panel"]
+        assert "judge-b" in panel["excluded"]
+        assert "judge-b" not in panel["members"]
+        assert any(v.judge_id == "judge-b" for v in result.verdicts)
+
+    def test_effective_votes_are_reported_against_what_was_paid_for(
+        self, example, tmp_path, three_judges
+    ):
+        panel = self.run_panel(example, tmp_path, three_judges).metrics["panel"]
+        assert panel["effective_votes"] <= panel["votes_paid_for"]
+
+    def test_a_judge_in_both_jobs_is_asked_once(self, example, tmp_path, three_judges):
+        # judge-a does triage and sits on the panel. The cache key is the
+        # question, not the job that wanted the answer.
+        self.run_panel(example, tmp_path, three_judges)
+        asked = [(r.system, r.user) for r in three_judges["judge-a"].calls]
+        assert len(asked) == len(set(asked))
+
+    def test_the_report_carries_the_panel_block(self, example, tmp_path, three_judges):
+        report = self.run_panel(example, tmp_path, three_judges).report
+        assert "  PANEL" in report
+        assert "effective votes" in report
+        assert "does not route disagreements to review" in report
+
+    def test_without_a_panel_the_report_says_what_that_costs(
+        self, example, provider, tmp_path, no_confirm
+    ):
+        import dataclasses
+
+        from llm_expectations.config import Judges
+
+        judges = config_without_panel = example.judges
+        stripped = dataclasses.replace(
+            example, judges=Judges(judges=judges.judges, panel=None, triage=judges.triage)
+        )
+        assert config_without_panel is judges
+        report = run(
+            stripped, out=tmp_path / "out", provider_factory=lambda spec: provider
+        ).report
+        assert "no panel is wired" in report

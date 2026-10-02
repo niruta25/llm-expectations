@@ -166,3 +166,24 @@ class TestDriftAcrossRuns:
         before = {f.item_id: f.score for f in second.findings if f.check == "drift"}
         after = {f.item_id: f.score for f in again.findings if f.check == "drift"}
         assert before == after
+
+
+class TestReviewReasons:
+    """The sentence beside a score must be the one that produced it."""
+
+    def test_only_the_ranking_judge_explains_the_queue(self, no_confirm, tmp_path):
+        from llm_expectations.judges.fake import FakeProvider
+
+        config = no_confirm(load_run(EXAMPLE / "run.yml"), max_usd=5.0)
+        ranker = FakeProvider(model="ranker", default=reply(True, 0.9, "the ranker's view"))
+        other = FakeProvider(model="other", default=reply(True, 0.9, "a panel member's view"))
+        by_id = {"judge-a": ranker, "judge-b": other, "judge-c": other}
+        result = run(
+            config, out=tmp_path / "out", provider_factory=lambda spec: by_id[spec.id]
+        )
+        review = result.report[result.report.index("REVIEW FIRST") :]
+        review = review[: review.index("WHAT THIS RUN")]
+        assert "the ranker's view" in review
+        # A panel member's reason beside a triage score explains a number
+        # nobody computed, and the two can contradict each other outright.
+        assert "a panel member's view" not in review

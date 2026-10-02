@@ -27,7 +27,7 @@ against. This tool covers those two kinds of field — **assigned** labels and
 
 ## Status
 
-**Pre-alpha.** The free checks and a triage judge both work.
+**Pre-alpha.** The free checks, a triage judge, and a panel all work.
 
 ```bash
 llm-expectations check examples/jtbd/taxonomy.yml   # static health, no data
@@ -36,16 +36,22 @@ llm-expectations run   examples/jtbd/run.yml        # collect and analyse
 llm-expectations analyse out/<run>/                 # re-analyse from cache, free
 ```
 
-Free, on every row: is the label real, did it stop at a leaf, is the abstention
-rate inside its band, has one label swallowed the batch, did the distribution
-move since the last run, and does each field agree with the others. Then one
-judge ranks what a human should open first, stamped uncalibrated.
+Free, on every row: is the label real, did it stop at a leaf, is the
+abstention rate inside its band, has one label swallowed the batch, did the
+distribution move since the last run, and does each field agree with the
+others.
+
+Then two jobs that cost money, wired separately. One judge ranks what a human
+should open first, stamped uncalibrated. A panel of two or more measures
+quality over a sample — reporting the vote split rather than an average,
+quoting the dissent, saying how many *effective* votes you actually bought,
+and naming the label boundaries it keeps splitting on. It does not route
+disagreements to review; that ships as a scored baseline at M4 so your own
+corpus settles it.
 
 Both grains are reported — an item passes only if every check on it passes —
-and the report closes with a box naming what the run cannot tell you. The panel
-arrives at M3 and the baselines that say whether the ranking beats guessing at
-M4. A worked project with deliberately planted defects lives in
-[`examples/jtbd/`][example].
+and the report closes with a box naming what the run cannot tell you. A worked
+project with deliberately planted defects lives in [`examples/jtbd/`][example].
 
 [example]: https://github.com/niruta25/llm-expectations/tree/main/examples/jtbd
 
@@ -87,8 +93,8 @@ M4. A worked project with deliberately planted defects lives in
 |---|---|---|
 | M0 | skeleton | done |
 | M1 | one judge, end to end | done — first shippable |
-| M2 | free checks + full report | **done** |
-| M3 | panel | |
+| M2 | free checks + full report | done |
+| M3 | panel | **done** |
 | M4 | guardrails + stats | shippable |
 | M5 | labels (Mode 1) | |
 | M5b | calibration + triage evaluation | shippable |

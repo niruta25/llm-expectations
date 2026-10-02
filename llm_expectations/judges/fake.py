@@ -20,11 +20,17 @@ from .base import JudgeError, JudgeReply, JudgeRequest
 __all__ = ["FakeProvider", "reply"]
 
 
-def reply(correct: bool | str, confidence: float | None = 0.8, reason: str = "scripted") -> str:
+def reply(
+    correct: bool | str,
+    confidence: float | None = 0.8,
+    reason: str = "scripted",
+    instead: str | None = None,
+) -> str:
     """Build a well-formed reply body. ``correct`` may be ``"cannot_decide"``."""
     value = "true" if correct is True else "false" if correct is False else f'"{correct}"'
     shown = "null" if confidence is None else confidence
-    return f'{{"correct": {value}, "confidence": {shown}, "reason": "{reason}"}}'
+    suggestion = f', "instead": "{instead}"' if instead else ""
+    return f'{{"correct": {value}, "confidence": {shown}, "reason": "{reason}"{suggestion}}}'
 
 
 @dataclass

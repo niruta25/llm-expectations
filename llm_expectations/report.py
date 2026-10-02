@@ -41,6 +41,7 @@ CHECK_LABELS: Mapping[str, str] = {
     "drift": "drift vs previous run",
     "cross_field_agreement": "agrees with other fields",
     "label_correct": "label is correct",
+    "label_correct_panel": "panel says label is correct",
     "free_text": "defect checks",
 }
 ORDER = list(CHECK_LABELS)
@@ -48,7 +49,7 @@ ORDER = list(CHECK_LABELS)
 #: Checks that cost money. Shown in their own block, because "free checks
 #: found nothing" and "we paid a judge and it found nothing" are different
 #: statements and a reader should not have to know which is which.
-PAID = frozenset({"label_correct", "claims_supported"})
+PAID = frozenset({"label_correct", "label_correct_panel", "claims_supported"})
 
 
 def render(
@@ -61,6 +62,7 @@ def render(
     health: Sequence[JudgeHealth],
     findings: Sequence[Finding],
     skipped: Sequence[Skipped],
+    panel: Mapping[str, Any],
     risk_rows: Sequence[RiskRow],
     verdicts: Sequence[Verdict],
     items: Mapping[str, Item],
@@ -73,11 +75,12 @@ def render(
     out += _modes(schema, modes, label_counts)
     out += _grains(metrics)
     out += _judges(health)
+    out += _panel(panel)
 
     for name, spec in schema.fields.items():
         out += _field_section(name, spec, schema, taxonomies, findings, skipped)
 
-    out += _review(risk_rows, verdicts)
+    out += _review(risk_rows, verdicts, ranked_by=str(metrics.get("ranked_by") or ""))
     out += _cannot(cannot_tell)
     out += _exclusions(exclusions)
     return "\n".join(out).rstrip() + "\n"
@@ -152,6 +155,95 @@ def _judges(health: Sequence[JudgeHealth]) -> list[str]:
             lines.append(f"    {mark} {wrapped[0].strip()}")
             lines += [f"      {line.strip()}" for line in wrapped[1:]]
     return lines + [""]
+
+
+def _panel(panel: Mapping[str, Any]) -> list[str]:
+    """The panel's three outputs, and the one number that justifies its cost."""
+    if not panel or not panel.get("members"):
+        return []
+
+    members = ", ".join(panel["members"])
+    lines = [
+        "  PANEL",
+        f"    {len(panel['members'])} judges × {panel['sampled_items']:,} items "
+        f"({members})",
+    ]
+    if panel.get("excluded"):
+        lines.append(
+            f"    excluded from the vote: {', '.join(panel['excluded'])} — outside the "
+            "approval band. Their verdicts are still on disk."
+        )
+
+    correct = panel.get("majority_correct")
+    if correct is not None:
+        lines.append(f"    majority says correct      {correct:>7.1%}")
+    if panel.get("undecided"):
+        lines.append(
+            f"    undecided                  {panel['undecided']:>7,}   "
+            "tied or nobody decided — not a pass"
+        )
+    if panel.get("agreement") is not None:
+        lines.append(f"    judges agree               {panel['agreement']:>7.1%}")
+
+    effective = panel.get("effective_votes")
+    if effective is not None:
+        lines.append(
+            f"    effective votes            {effective:>7.1f}   of "
+            f"{panel['votes_paid_for']} paid for"
+        )
+    if panel.get("warning"):
+        lines.append("    ⚠ " + _wrapped(panel["warning"], indent=0)[0])
+        lines += [f"      {line}" for line in _wrapped(panel["warning"], indent=0)[1:]]
+
+    for entry in panel.get("leniency", [])[:3]:
+        lines.append(
+            f"    {entry['lenient']} approves where {entry['strict']} rejects   "
+            f"{entry['lenient_approved']} times, against {entry['strict_approved']} "
+            "the other way"
+        )
+
+    lines += _fuzzy(panel)
+    lines.append("    The panel measures. It does not route disagreements to review,")
+    lines.append("    auto-approve unanimity, or blend its votes into one score.")
+    return lines + [""]
+
+
+def _fuzzy(panel: Mapping[str, Any]) -> list[str]:
+    """Where disagreement concentrates — a taxonomy bug, not a model bug."""
+    splits = panel.get("splits") or 0
+    if not splits:
+        return []
+    pairs = panel.get("fuzzy_pairs") or []
+    attributed = panel.get("splits_attributed") or 0
+    lines = [f"    the judges split on         {splits:>6,} rows"]
+    if not pairs:
+        lines.append(
+            "      no pair can be named: no dissenting judge said which label it would"
+        )
+        lines.append(
+            "      assign instead, and guessing one from the taxonomy's shape would be"
+        )
+        lines.append("      an inference, not a finding")
+        return lines
+    for pair in pairs:
+        share = pair["splits"] / splits
+        lines.append(
+            f"      {pair['field']}: {pair['left']} ↔ {pair['right']}   "
+            f"{pair['splits']} ({share:.0%} of splits)"
+        )
+    if attributed < splits:
+        lines.append(
+            f"      {splits - attributed} split(s) unattributed — the dissenter named "
+            "no alternative"
+        )
+    if panel.get("splits_unusable"):
+        lines += _wrapped(
+            f"{panel['splits_unusable']} dissenter(s) named a label that field's taxonomy "
+            "does not define — a judge-health problem, not a boundary",
+            indent=6,
+        )
+    lines.append("      disagreement concentrated on a boundary is a taxonomy bug")
+    return lines
 
 
 def _field_section(
@@ -299,8 +391,10 @@ def _evidence(found: Finding) -> str:
     return _why(found)
 
 
-def _review(risk_rows: Sequence[RiskRow], verdicts: Sequence[Verdict]) -> list[str]:
-    reasons = _reasons(verdicts)
+def _review(
+    risk_rows: Sequence[RiskRow], verdicts: Sequence[Verdict], *, ranked_by: str = ""
+) -> list[str]:
+    reasons = _reasons(verdicts, ranked_by=ranked_by)
     ranked = [row for row in risk_rows if row.triage_score is not None]
     unranked = [row for row in risk_rows if row.triage_score is None]
     lines: list[str] = []
@@ -357,11 +451,19 @@ def _pct(value: float | None) -> str:
     return f"{value:.0%}" if value >= 0.01 or value == 0 else "<1%"
 
 
-def _reasons(verdicts: Sequence[Verdict]) -> dict[str, str]:
-    """The judge's own sentence, which is what a reviewer actually reads."""
+def _reasons(verdicts: Sequence[Verdict], *, ranked_by: str = "") -> dict[str, str]:
+    """The sentence behind the score, which is what a reviewer actually reads.
+
+    Only the ranking judge's. A panel member's reason sitting next to a
+    triage score explains a number nobody computed — and the two can
+    contradict each other outright, which reads as the tool confusing itself.
+    The panel's view of the same item is in its own findings.
+    """
     worst: dict[str, tuple[int, str]] = {}
     rank = {"fail": 0, "unscored": 1, "pass": 2}
     for verdict in verdicts:
+        if ranked_by and verdict.judge_id != ranked_by:
+            continue
         score = rank.get(verdict.status.value, 3)
         current = worst.get(verdict.item_id)
         if current is None or score < current[0]:
