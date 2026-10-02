@@ -35,11 +35,16 @@ def report(no_confirm, scripted, tmp_path):
 
 
 class TestAlwaysDoesThree:
-    def test_it_says_which_mode_each_field_is_in_at_the_top(self, report):
-        lines = report().report.splitlines()
-        head = "\n".join(lines[:12])
+    def test_it_says_which_mode_each_field_is_in_near_the_top(self, report):
+        text = report().report
+        head = text[: text.index("── jtbd")]
         assert "MODE" in head
         assert "MODE 0" in head and "no labels" in head
+
+    def test_the_gates_come_before_any_quality_number(self, report):
+        text = report().report
+        assert text.index("GATES") < text.index("MODE")
+        assert text.index("GATES") < text.index("── jtbd")
 
     def test_it_prints_the_threshold_and_its_source_beside_the_number(self, report):
         text = report().report
@@ -49,7 +54,10 @@ class TestAlwaysDoesThree:
     def test_it_names_what_it_cannot_conclude(self, report):
         text = report().report
         assert "WHAT THIS RUN CANNOT TELL YOU" in text
-        assert "better than guessing" in text
+        assert "Error Recall@Budget" in text
+        # Thirteen items cannot support a ranking claim, and the gate says
+        # which numbers it withheld rather than printing them with a caveat.
+        assert "gate2.auc" in text
 
 
 class TestLayout:

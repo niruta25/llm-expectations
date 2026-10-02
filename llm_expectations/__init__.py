@@ -1,14 +1,19 @@
 """llm-expectations — quality checks for LLM outputs that are judgements *about*
 a document, not values copied *out of* one.
 
-Pre-alpha. Three things work: the free checks — label validity, leaf depth,
-abstention rate, label collapse, drift against the last run, and cross-field
-agreement; a triage judge that ranks what a human should open first; and a
-panel that measures quality over a sample, reports what its votes are
-actually worth, and locates the label boundaries it keeps splitting on.
+Pre-alpha, and both gates are now in place. Nothing is reported until the
+measurement has been shown sound, and no ranking is called usable until it
+has beaten random, output length, majority label and panel disagreement on
+the same rows, with an interval that clears the best of them.
 
-That is M0 through M3 (DESIGN.md §12). The baselines that say whether the
-ranking beats guessing arrive at M4, and the operating-point table at M5b.
+Underneath: the free checks, a triage judge that ranks what a human should
+open first, and a panel that measures over a sample and locates the label
+boundaries it keeps splitting on. A guardrail that fires withholds the
+numbers it invalidates and names them, rather than printing them with a
+caveat nobody reads.
+
+That is M0 through M4 (DESIGN.md §12). Classification metrics arrive at M5
+and the operating-point table at M5b.
 
   - assigned fields   a label chosen from a versioned taxonomy
   - free text fields  a sentence written about the item
@@ -30,9 +35,12 @@ from __future__ import annotations
 from .calibration import Calibrator, IdentityCalibrator
 from .checks import CheckContext, run_checks
 from .config import ConfigError, RunConfig, Settings, load_run
+from .gates import Gate, Gates, Suppression, gate_one, gate_two
 from .judges import Judge, JudgeError, LabelCorrectTask
 from .judges.fake import FakeProvider
 from .metrics import AgreementReport, FuzzyPair, effective_votes
+from .metrics.ranking import auc
+from .metrics.stats import Estimate, bootstrap_ci
 from .plan import plan_run
 from .read import ReadError, index_items, read_items, read_labels, read_outputs
 from .schema import FieldKind, FieldSpec, Schema, SchemaError, TextStyle
@@ -66,7 +74,10 @@ __all__ = [
     "FieldKind",
     "FieldSpec",
     "Finding",
+    "Estimate",
     "FuzzyPair",
+    "Gate",
+    "Gates",
     "Grain",
     "IdentityCalibrator",
     "Item",
@@ -86,13 +97,18 @@ __all__ = [
     "Status",
     "Taxonomy",
     "TaxonomyError",
+    "Suppression",
     "TextStyle",
     "TriageContext",
     "TriageStrategy",
     "Verdict",
     "__version__",
+    "auc",
+    "bootstrap_ci",
     "check_recorded_hash",
     "effective_votes",
+    "gate_one",
+    "gate_two",
     "index_items",
     "load_run",
     "load_taxonomy",

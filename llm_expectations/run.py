@@ -26,6 +26,7 @@ from .calibration.base import Calibrator
 from .checks import CheckContext, run_checks
 from .checks.corpus import label_shares
 from .config import RunConfig, load_run
+from .gates import Gates, gate_one, gate_two
 from .judges.base import Judge, JudgeTask, Provider, ReplyOutcome
 from .judges.panel import CHECK_ID as PANEL_CHECK
 from .judges.panel import majority, sample_items
@@ -310,11 +311,15 @@ def to_findings(
     A field nobody judged gets an unscored finding saying why. Leaving it out
     would let a run that checked one of three fields look complete.
     """
-    judged = {(v.item_id, v.field) for v in verdicts}
-    model = None
+    # One finding per item and field, from the ranking judge only. A panel
+    # member's verdict on the same row is the panel's business and has its
+    # own check; pooling them here would make "label is correct" an average
+    # over judges of different quality, with the rubber stamp pulling it up.
     triage = config.judges.triage
-    if triage is not None:
-        model = config.judges.judges[triage.judge].model
+    ranker = triage.judge if triage is not None else None
+    model = config.judges.judges[ranker].model if ranker else None
+    scored = [v for v in verdicts if ranker is None or v.judge_id == ranker]
+    judged = {(v.item_id, v.field) for v in scored}
 
     findings = [
         Finding(
@@ -344,7 +349,7 @@ def to_findings(
             if not verdict.metadata.get("cache_hit")
             else 0.0,
         )
-        for verdict in verdicts
+        for verdict in scored
     ]
 
     for name, spec in config.schema.fields.items():
@@ -368,6 +373,33 @@ def to_findings(
                 )
             )
     return findings
+
+
+def scoring_context(
+    config: RunConfig, dataset: Dataset, verdicts: Sequence[Verdict], calibrator: Calibrator
+) -> TriageContext:
+    """The context Gate 2 scores every strategy on, baselines included.
+
+    Deliberately *not* the context the queue is built from. The queue sees
+    only the ranking judge, because letting panel opinions into it would make
+    the panel a routing signal. But `panel_disagreement` has to be *scored* as
+    a baseline, and it cannot be scored on inputs it was denied — so the gate
+    gets every verdict, and every strategy competes on the same rows.
+
+    The asymmetry is the point: disagreement is measured here and used
+    nowhere. If it wins on your corpus, you select it deliberately.
+    """
+    by_item: dict[str, list[Verdict]] = {}
+    for verdict in verdicts:
+        by_item.setdefault(verdict.item_id, []).append(verdict)
+    return TriageContext(
+        verdicts={k: tuple(v) for k, v in by_item.items()},
+        outputs=dataset.outputs,
+        fields=tuple(config.schema.fields),
+        calibrator=calibrator,
+        item_ids=tuple(dataset.outputs),
+        panel_members=tuple(config.judges.panel.members) if config.judges.panel else (),
+    )
 
 
 def build_triage(
@@ -556,15 +588,25 @@ def previous_run(out: Path, config: RunConfig) -> dict[str, Any]:
 
 
 def what_this_run_cannot_tell_you(
-    config: RunConfig, modes: Mapping[str, Mode], health: Sequence[JudgeHealth]
+    config: RunConfig,
+    modes: Mapping[str, Mode],
+    health: Sequence[JudgeHealth],
+    gates: Gates,
 ) -> list[str]:
     lines = [
-        "whether this ranking is any better than guessing\n"
-        "the trivial baselines — random, output length, majority label —\n"
-        "arrive with Gate 2 at M4, and until then there is nothing to compare against",
         "how many errors a review budget would actually find\n"
         "Error Recall@Budget needs a fitted calibration and labelled rows; M5b",
     ]
+    if gates.two.skipped:
+        lines.insert(0, f"whether this ranking is any better than guessing\n{gates.two.skipped}")
+    withheld = gates.suppressed()
+    if withheld:
+        names = ", ".join(sorted(s.metric for s in withheld))
+        lines.append(
+            f"{names}\n"
+            "withheld — a guardrail above says these cannot be computed honestly on this "
+            "run, and a number that cannot be computed honestly is not reported"
+        )
     free_text = [n for n, s in config.schema.fields.items() if s.kind is FieldKind.FREE_TEXT]
     if free_text:
         lines.append(
@@ -584,12 +626,6 @@ def what_this_run_cannot_tell_you(
             "no panel is wired in judges.yml. A panel of two or more over a sample "
             "answers both, and locating a fuzzy boundary needs nothing but the split."
         )
-    for row in health:
-        if row.excluded_from_panel:
-            lines.append(
-                f"anything that rests on {row.judge_id}\n"
-                "it is outside the approval band, so its verdicts carry no information"
-            )
     return lines
 
 
@@ -749,6 +785,24 @@ def _analyse(
     calibrator: Calibrator = IdentityCalibrator()
     risk_rows, strategy_id = build_triage(config, dataset, verdicts, calibrator)
 
+    gate1 = gate_one(
+        config, judge_health=health, items=len(dataset.items), verdicts=verdicts, panel=panel
+    )
+    gate2 = gate_two(
+        config,
+        scoring_context(config, dataset, verdicts, calibrator),
+        strategy_id,
+        dataset.labels,
+        dataset.outputs,
+    )
+    gates = Gates(
+        one=gate1,
+        two=gate2.gate,
+        table=gate2.scores,
+        target_size=gate2.target_size,
+        target_errors=gate2.target_errors,
+    )
+
     # A model with no published price produces no cost, not a zero. Reporting
     # $0.00 for a run against an unpriced judge would be a made-up number.
     priced = plan is None or not plan.unpriced_models
@@ -799,9 +853,45 @@ def _analyse(
             {"check": s.check, "field": s.field, "reason": s.reason} for s in skipped
         ],
         "panel": panel,
+        "gates": {
+            "measurement_sound": {
+                "status": gates.one.status,
+                "results": [
+                    {"id": r.id, "severity": r.severity.value, "message": r.message}
+                    for r in gates.one.results
+                ],
+            },
+            "beats_baselines": {
+                "status": gates.two.status,
+                "skipped": gates.two.skipped,
+                "results": [
+                    {"id": r.id, "severity": r.severity.value, "message": r.message}
+                    for r in gates.two.results
+                ],
+                "target_items": gates.target_size,
+                "target_errors": gates.target_errors,
+                "table": [
+                    {
+                        "strategy": s.strategy,
+                        "baseline": s.is_baseline,
+                        "auc": s.estimate.value,
+                        "ci_low": s.estimate.low,
+                        "ci_high": s.estimate.high,
+                        "n": s.estimate.n,
+                        "under_floor": s.estimate.under_floor,
+                        "unranked": s.unranked,
+                        "unranked_errors": s.unranked_errors,
+                    }
+                    for s in gates.table
+                ],
+            },
+        },
+        "suppressed": [
+            {"metric": s.metric, "reason": s.reason} for s in gates.suppressed()
+        ],
     }
 
-    cannot = what_this_run_cannot_tell_you(config, modes, health)
+    cannot = what_this_run_cannot_tell_you(config, modes, health, gates)
     report = render(
         run_id=run_id,
         schema=config.schema,
@@ -812,6 +902,7 @@ def _analyse(
         findings=findings,
         skipped=skipped,
         panel=panel,
+        gates=gates,
         risk_rows=risk_rows,
         verdicts=verdicts,
         items=dataset.items,

@@ -18,9 +18,9 @@ classifiers = [
 ]
 
 # One per milestone that needs it, not one list up front. M0 reads config, so
-# it takes pyyaml; M1 makes the first provider call, so it takes httpx. numpy
-# arrives with the first interval (M4). See DESIGN.md §12.
-dependencies = ["pyyaml>=6", "httpx>=0.27"]
+# it takes pyyaml; M1 makes the first provider call, so it takes httpx; M4
+# resamples a thousand times per interval, so it takes numpy. See DESIGN.md §12.
+dependencies = ["pyyaml>=6", "httpx>=0.27", "numpy>=1.24"]
 
 [project.optional-dependencies]
 # Input readers beyond jsonl/csv. Not needed by the core path.
