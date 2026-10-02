@@ -43,6 +43,7 @@ CHECK_LABELS: Mapping[str, str] = {
     "cross_field_agreement": "agrees with other fields",
     "label_correct": "label is correct",
     "label_correct_panel": "panel says label is correct",
+    "label_tree_bucket": "matches the human answer",
     "free_text": "defect checks",
 }
 ORDER = list(CHECK_LABELS)
@@ -51,6 +52,11 @@ ORDER = list(CHECK_LABELS)
 #: found nothing" and "we paid a judge and it found nothing" are different
 #: statements and a reader should not have to know which is which.
 PAID = frozenset({"label_correct", "label_correct_panel", "claims_supported"})
+
+#: Free to compute but impossible without human answers. Shown apart from the
+#: free checks, which run on every corpus, so a reader can see at a glance
+#: which numbers would disappear if the labels did.
+NEEDS_LABELS = frozenset({"label_tree_bucket"})
 
 
 def render(
@@ -64,6 +70,7 @@ def render(
     findings: Sequence[Finding],
     skipped: Sequence[Skipped],
     panel: Mapping[str, Any],
+    humans: Mapping[str, Any],
     gates: Gates,
     risk_rows: Sequence[RiskRow],
     verdicts: Sequence[Verdict],
@@ -82,6 +89,8 @@ def render(
 
     for name, spec in schema.fields.items():
         out += _field_section(name, spec, schema, taxonomies, findings, skipped)
+        out += _vs_humans((humans.get("fields") or {}).get(name), name)
+    out += _judges_vs_humans(humans.get("judges") or [])
 
     out += _review(risk_rows, verdicts, ranked_by=str(metrics.get("ranked_by") or ""))
     out += _cannot(cannot_tell)
@@ -215,6 +224,16 @@ def _judges(health: Sequence[JudgeHealth]) -> list[str]:
 
 def _panel(panel: Mapping[str, Any]) -> list[str]:
     """The panel's three outputs, and the one number that justifies its cost."""
+    if panel.get("collapsed"):
+        lines = ["  PANEL"]
+        if panel.get("excluded"):
+            lines += _wrapped(
+                f"excluded from the vote: {', '.join(panel['excluded'])} — outside the "
+                "approval band. Their verdicts are still on disk.",
+                indent=4,
+            )
+        lines += _wrapped(str(panel["collapsed"]), indent=4)
+        return lines + [""]
     if not panel or not panel.get("members"):
         return []
 
@@ -225,9 +244,10 @@ def _panel(panel: Mapping[str, Any]) -> list[str]:
         f"({members})",
     ]
     if panel.get("excluded"):
-        lines.append(
-            f"    excluded from the vote: {', '.join(panel['excluded'])} — outside the "
-            "approval band. Their verdicts are still on disk."
+        lines += _wrapped(
+            f"excluded from the vote: {', '.join(panel['excluded'])} — outside the "
+            "approval band. Their verdicts are still on disk.",
+            indent=4,
         )
 
     correct = panel.get("majority_correct")
@@ -328,7 +348,7 @@ def _field_section(
     ordered = sorted(grouped, key=lambda c: (ORDER.index(c) if c in ORDER else 99, c))
 
     lines = [header, ""]
-    free = [c for c in ordered if c not in PAID]
+    free = [c for c in ordered if c not in PAID and c not in NEEDS_LABELS]
     if free:
         lines.append("  free checks")
         for check in free:
@@ -346,6 +366,13 @@ def _field_section(
         lines.append("")
         lines.append("  judge")
         for check in paid:
+            lines += _check_line(check, grouped[check])
+
+    labelled = [c for c in ordered if c in NEEDS_LABELS]
+    if labelled:
+        lines.append("")
+        lines.append("  with labels")
+        for check in labelled:
             lines += _check_line(check, grouped[check])
     return lines + [""]
 
@@ -444,6 +471,11 @@ def _evidence(found: Finding) -> str:
         return f"{evidence.get('label')!r} is a parent of {children}"
     if found.check == "cross_field_agreement":
         return f"no overlap with {evidence.get('label')} — one of the two is wrong"
+    if found.check == "label_tree_bucket":
+        return (
+            f"{found.evidence.get('assigned')!r} vs {found.evidence.get('human')!r} — "
+            f"{found.evidence.get('why', '')}"
+        )
     if found.check == "label_correct_panel":
         votes = evidence.get("votes") or {}
         dissent = evidence.get("dissent") or {}
@@ -451,6 +483,190 @@ def _evidence(found: Finding) -> str:
         quoted = next(iter(dissent.values()), "")
         return f"{evidence.get('agreement', '')} ({split})" + (f" — {quoted}" if quoted else "")
     return _why(found)
+
+
+def _vs_humans(scored: Mapping[str, Any] | None, field: str) -> list[str]:
+    """What the human answers say about one field."""
+    if not scored:
+        return []
+    lines = [f"  vs humans   {scored['n']} labelled items", ""]
+
+    rows = scored.get("labels") or []
+    present = [r for r in rows if r["support"]]
+    thin = [r for r in present if r["under_floor"]]
+
+    macro = scored.get("macro_f1")
+    if macro is not None:
+        lines.append(f"    macro F1                   {macro:>7.2f}   the headline")
+        if thin:
+            # Macro F1 averages per-label F1s. If most of those are built on
+            # a handful of rows each, so is the average, and it inherits
+            # their uncertainty without inheriting their visible n.
+            lines += _wrapped(
+                f"built from {len(present)} per-label scores, {len(thin)} of which sit "
+                "below the per-label floor. The average cannot support a conclusion "
+                "that its parts cannot.",
+                indent=6,
+            )
+    accuracy, baseline = scored.get("accuracy"), scored.get("majority_baseline")
+    if accuracy is not None:
+        tail = (
+            f"   majority-label baseline {baseline:.1%}" if baseline is not None else ""
+        )
+        mark = "✓" if scored.get("beats_majority") else "✗"
+        lines.append(f"    accuracy                   {accuracy:>7.1%}   {mark}{tail}")
+        if scored.get("beats_majority") is False:
+            lines += _wrapped(
+                "this does not beat always guessing the biggest label, which knows "
+                "nothing. Accuracy is never a result on its own.",
+                indent=6,
+            )
+
+    buckets = scored.get("buckets") or {}
+    total = sum(buckets.values())
+    if total:
+        order = ("exact", "right_parent", "too_shallow", "wrong", "abstained", "unknown")
+        shown = " / ".join(
+            f"{buckets.get(k, 0) / total:.0%}" for k in order if buckets.get(k)
+        )
+        names = " / ".join(k.replace("_", " ") for k in order if buckets.get(k))
+        lines.append(f"    {names}")
+        lines.append(f"    {shown}")
+        lines += _bucket_advice(buckets, total)
+
+    weak = scored.get("weak_labels") or []
+    if weak:
+        rows = {row["label"]: row for row in scored.get("labels") or []}
+        for name in weak[:3]:
+            row = rows[name]
+            lines.append(
+                f"    weakest label              {name}   recall "
+                f"{row['recall']:.2f}  n={row['support']}"
+            )
+    lines += _direction(scored.get("confusion_direction") or [])
+    lines += _annotators(scored.get("annotators"))
+    return lines + [""]
+
+
+def _bucket_advice(buckets: Mapping[str, int], total: int) -> list[str]:
+    """Each bucket points at a different fix, so say which."""
+    advice = {
+        "right_parent": "siblings confused — two definitions need sharpening",
+        "too_shallow": "stopped at a parent — the model is hedging, not misreading",
+        "wrong": "a different branch — the model is not reading the item",
+        "unknown": "labels that are not in the taxonomy at all",
+    }
+    out = []
+    for key, text in advice.items():
+        share = buckets.get(key, 0) / total
+        if share >= 0.05:
+            out.append(f"      {share:.0%} {text}")
+    return out
+
+
+def _direction(pairs: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Symmetric confusion is a taxonomy bug; one-way is a prompt bug."""
+    if not pairs:
+        return []
+    lines = ["    confusable pairs"]
+    for pair in pairs:
+        forward, backward = pair["forward"], pair["backward"]
+        lines.append(f"      {forward['from']} → {forward['to']}")
+        lines.append(
+            f"        {forward['n']} this way, {backward['n']} back — {pair['shape']}"
+        )
+        lines += _wrapped(pair["verdict"], indent=8)
+    return lines
+
+
+def _annotators(humans: Mapping[str, Any] | None) -> list[str]:
+    """Two people disagreeing is the strongest evidence a taxonomy is wrong."""
+    if not humans or not humans.get("compared"):
+        return []
+    lines = [
+        f"    two annotators             {humans['agreement']:.1%} agree over "
+        f"{humans['compared']} double-labelled items"
+    ]
+    concentration = humans.get("concentration")
+    pairs = humans.get("pairs") or []
+    if pairs and concentration is not None:
+        top = pairs[0]
+        lines.append(f"      {top['left']} ↔ {top['right']}")
+        lines.append(
+            f"        {top['n']} of {humans['disagreements']} disagreements "
+            f"({concentration:.0%})"
+        )
+        if concentration >= 0.5:
+            lines += _wrapped(
+                "your annotators cannot separate these two either. That is not a model "
+                "problem — merge them or rewrite both definitions.",
+                indent=6,
+            )
+    return lines
+
+
+def _judges_vs_humans(judges: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Which way each judge fails, and whether it beats doing nothing."""
+    if not judges:
+        return []
+    lines = [
+        "  ── judges vs humans " + "─" * 51,
+        "",
+        f"    {'judge':<12}{'accuracy':>9}{'vs always-approve':>19}"
+        f"{'approves wrong':>16}{'rejects right':>15}",
+    ]
+    for row in judges:
+        accuracy = row.get("accuracy")
+        baseline = row.get("always_approve_accuracy")
+        mark = "✓" if row.get("beats_always_approve") else "✗"
+        lines.append(
+            f"    {row['judge']:<12}{_maybe(accuracy):>9}"
+            f"{mark + ' ' + _maybe(baseline):>19}"
+            f"{_maybe(row.get('approves_wrong')):>16}{_maybe(row.get('rejects_right')):>15}"
+        )
+    for row in judges:
+        if row.get("beats_always_approve") is False:
+            lines += _wrapped(
+                f"{row['judge']} does not beat approving everything. It is costing money "
+                "and adding nothing.",
+                indent=4,
+            )
+        if row.get("leaning") in {"lenient", "strict"}:
+            lines.append(f"    {row['judge']} fails {row['leaning']}.")
+    lines += _wrapped(
+        "A panel of judges that all fail the same way is nearly one judge. What helps "
+        "is one that fails the other way.",
+        indent=4,
+    )
+    lines += _confidence(judges)
+    return lines + [""]
+
+
+def _confidence(judges: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Does 0.9 mean 90%?"""
+    lines: list[str] = []
+    for row in judges:
+        curve = row.get("confidence") or {}
+        if curve.get("ece") is None:
+            continue
+        mark = "✗" if curve.get("broken") else "✓"
+        lines.append(
+            f"    {row['judge']} confidence   ECE {curve['ece']:.3f} {mark}   "
+            f"Brier {curve['brier']:.3f} vs {curve['brier_base_rate']:.3f} base rate"
+        )
+        if curve.get("direction"):
+            lines += _wrapped(curve["direction"], indent=6)
+        if curve.get("beats_base_rate") is False:
+            lines += _wrapped(
+                "the confidences add nothing — one number for every item would score "
+                "the same.",
+                indent=6,
+            )
+    return lines
+
+
+def _maybe(value: float | None, places: int = 2) -> str:
+    return "—" if value is None else f"{value:.{places}f}"
 
 
 def _review(

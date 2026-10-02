@@ -236,3 +236,43 @@ class TestFuzzyPairs:
             rows, "ab", self._outputs({"s-1": "billing.payment_failed"}), vocabularies=self.VOCAB
         )
         assert report.splits == 0
+
+
+class TestACollapsedPanel:
+    """Exclusions can leave fewer than two voters. That is not a panel."""
+
+    def test_one_surviving_judge_produces_no_panel_numbers(
+        self, example, tmp_path, scripted
+    ):
+        from llm_expectations.judges.fake import FakeProvider, reply
+        from llm_expectations.run import run
+
+        strict = FakeProvider(model="strict", default=reply(False, 0.9, "wrong"))
+        rubber = FakeProvider(model="rubber", default=reply(True, 0.98, "fine"))
+        by_id = {"judge-a": strict, "judge-b": rubber, "judge-c": rubber}
+        result = run(
+            example, out=tmp_path / "out", provider_factory=lambda spec: by_id[spec.id]
+        )
+        panel = result.metrics["panel"]
+        assert panel.get("collapsed")
+        # One judge's verdict relabelled as a consensus would be the worst of
+        # both: it reads as agreement and is a single opinion.
+        assert "agreement" not in panel
+        assert "effective_votes" not in panel
+        assert not [f for f in result.findings if f.check == "label_correct_panel"]
+
+    def test_the_report_says_why_rather_than_omitting_the_block(
+        self, example, tmp_path
+    ):
+        from llm_expectations.judges.fake import FakeProvider, reply
+        from llm_expectations.run import run
+
+        strict = FakeProvider(model="strict", default=reply(False, 0.9, "wrong"))
+        rubber = FakeProvider(model="rubber", default=reply(True, 0.98, "fine"))
+        by_id = {"judge-a": strict, "judge-b": rubber, "judge-c": rubber}
+        report = run(
+            example, out=tmp_path / "out", provider_factory=lambda spec: by_id[spec.id]
+        ).report
+        assert "PANEL" in report
+        assert "survived screening" in report
+        assert "A panel needs two" in report

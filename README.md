@@ -27,8 +27,8 @@ against. This tool covers those two kinds of field — **assigned** labels and
 
 ## Status
 
-**Pre-alpha.** Both gates work, which is the point at which the numbers
-start meaning something.
+**Pre-alpha.** Both gates work, and human answers now grade the model *and*
+the judges scoring it.
 
 ```bash
 llm-expectations check examples/jtbd/taxonomy.yml   # static health, no data
@@ -43,25 +43,32 @@ llm-expectations analyse out/<run>/                 # re-analyse from cache, fre
   │  ✓ judge beats baselines      PASS                                  │
   └─────────────────────────────────────────────────────────────────────┘
 
-    ranked against 79 known errors in 400 labelled items
     strategy                 AUC  95% interval           n
     raw_confidence          0.99  [0.99, 1.00]         400  ← the judge
     random                  0.49  [0.41, 0.56]         400  ← baseline
     output_length           0.50  [0.50, 0.50]         400  ← baseline
-    majority_label          0.52  [0.48, 0.56]         400  ← baseline
-    panel_disagreement      0.64  [0.58, 0.70]         300  ← baseline
+
+  vs humans   400 labelled items
+    macro F1                      0.91   the headline
+    accuracy                     89.2%   ✓   majority-label baseline 18.2%
+    exact / right parent / too shallow / wrong
+    89% / 4% / 4% / 2%
+    confusable pairs
+      billing.card_declined → billing.payment_failed
+        5 this way, 5 back — symmetric
+        neither direction dominates — fix the taxonomy
+    two annotators             95.0% agree over 120 double-labelled items
+      billing.card_declined ↔ billing.payment_failed
+        6 of 6 disagreements (100%)
+      your annotators cannot separate these two either.
 ```
 
-Gate 2 passes only when the judge's **interval** clears the best baseline's
-number — a higher point estimate with an overlapping interval has not been
-shown to beat anything. When it does not pass, the honest answer is *a judge
-is not buying you anything here*, and the report says so.
-
-Underneath: free checks on every row, one judge ranking what a human should
-open first, and a panel measuring over a sample. A guardrail that fires
-withholds the numbers it invalidates and names them. Intervals resample whole
-**items**, never `(item, field)` pairs — fields of one item move together, and
-resampling them apart fakes independence.
+Every number carries what it has to beat. Accuracy never appears without the
+majority-label baseline; a ranking never appears without random and output
+length; a judge's accuracy never appears without "approve everything". Four
+tree buckets say *which kind* of wrong, because a sibling, a hedge and a
+misread need three different fixes. Confusion that runs both ways is a
+taxonomy bug; confusion that runs one way is a prompt bug.
 
 A worked project with deliberately planted defects lives in
 [`examples/jtbd/`][example]; at thirteen items it correctly *fails* Gate 2,
@@ -109,8 +116,8 @@ which is what a fixture that size should do.
 | M1 | one judge, end to end | done — first shippable |
 | M2 | free checks + full report | done |
 | M3 | panel | done |
-| M4 | guardrails + stats | **done** — shippable |
-| M5 | labels (Mode 1) | |
+| M4 | guardrails + stats | done — shippable |
+| M5 | labels (Mode 1) | **done** |
 | M5b | calibration + triage evaluation | shippable |
 | M6 | free text | shippable |
 | M7 | across runs | |

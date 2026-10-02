@@ -1,19 +1,22 @@
 """llm-expectations — quality checks for LLM outputs that are judgements *about*
 a document, not values copied *out of* one.
 
-Pre-alpha, and both gates are now in place. Nothing is reported until the
-measurement has been shown sound, and no ranking is called usable until it
-has beaten random, output length, majority label and panel disagreement on
-the same rows, with an interval that clears the best of them.
+Pre-alpha. Both gates are in place, and human answers now grade both the
+model and the judges that score it.
+
+With labels: macro F1 beside the baseline it has to beat, a confusion matrix,
+and four tree buckets that say *which kind* of wrong — a sibling, a hedge or
+a misread each point at a different fix. With a second annotator: whether two
+people can separate two labels at all, which is the strongest evidence a
+taxonomy is the problem. And each judge is graded on which way it fails, and
+on whether its stated confidences mean anything.
 
 Underneath: the free checks, a triage judge that ranks what a human should
-open first, and a panel that measures over a sample and locates the label
-boundaries it keeps splitting on. A guardrail that fires withholds the
-numbers it invalidates and names them, rather than printing them with a
-caveat nobody reads.
+open first, and a panel that measures over a sample. A guardrail that fires
+withholds the numbers it invalidates and names them.
 
-That is M0 through M4 (DESIGN.md §12). Classification metrics arrive at M5
-and the operating-point table at M5b.
+That is M0 through M5 (DESIGN.md §12). The fitted calibration and the
+operating-point table arrive at M5b.
 
   - assigned fields   a label chosen from a versioned taxonomy
   - free text fields  a sentence written about the item
@@ -39,6 +42,7 @@ from .gates import Gate, Gates, Suppression, gate_one, gate_two
 from .judges import Judge, JudgeError, LabelCorrectTask
 from .judges.fake import FakeProvider
 from .metrics import AgreementReport, FuzzyPair, effective_votes
+from .metrics.classification import Classification, TreeBucket, classify
 from .metrics.ranking import auc
 from .metrics.stats import Estimate, bootstrap_ci
 from .plan import plan_run
@@ -68,6 +72,7 @@ __all__ = [
     "AgreementReport",
     "Calibrator",
     "CheckContext",
+    "Classification",
     "ConfigError",
     "Exclusion",
     "FakeProvider",
@@ -99,6 +104,7 @@ __all__ = [
     "TaxonomyError",
     "Suppression",
     "TextStyle",
+    "TreeBucket",
     "TriageContext",
     "TriageStrategy",
     "Verdict",
@@ -106,6 +112,7 @@ __all__ = [
     "auc",
     "bootstrap_ci",
     "check_recorded_hash",
+    "classify",
     "effective_votes",
     "gate_one",
     "gate_two",

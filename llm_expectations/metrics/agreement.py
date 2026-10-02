@@ -15,13 +15,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import combinations
 
-from ..types import Status, Verdict
+from ..types import Label, Status, Verdict
 
 __all__ = [
     "AgreementReport",
+    "AnnotatorAgreement",
     "FuzzyPair",
     "FuzzyReport",
     "Leniency",
+    "annotator_agreement",
     "effective_votes",
     "fuzzy_pairs",
     "leniency",
@@ -305,3 +307,77 @@ def fuzzy_pairs(
         for (field, left, right), n in counts.most_common(top)
     )
     return FuzzyReport(pairs=pairs, splits=split, attributed=attributed, unusable=unusable)
+
+
+@dataclass(frozen=True, slots=True)
+class AnnotatorAgreement:
+    """Whether two people can separate the labels — mode 2's question.
+
+    The strongest evidence the fuzzy-pair detector takes. A model confusing
+    two labels might be a model problem; two trained humans confusing the
+    same two labels is not. The taxonomy is wrong, and no amount of prompt
+    work will fix it.
+    """
+
+    field: str
+    compared: int
+    agreed: int
+    pairs: tuple[tuple[str, str, int], ...] = ()
+    annotators: tuple[str, ...] = ()
+
+    @property
+    def agreement(self) -> float | None:
+        return self.agreed / self.compared if self.compared else None
+
+    @property
+    def disagreements(self) -> int:
+        return self.compared - self.agreed
+
+    @property
+    def concentration(self) -> float | None:
+        """Share of all disagreement sitting on the single worst pair.
+
+        Scattered disagreement is annotators being human. Concentrated
+        disagreement is one boundary nobody can see, and that is a finding.
+        """
+        if not self.disagreements or not self.pairs:
+            return None
+        return self.pairs[0][2] / self.disagreements
+
+
+def annotator_agreement(
+    labels: Sequence[Label], field: str, *, top: int = 5
+) -> AnnotatorAgreement:
+    """Compare every pair of annotators who labelled the same item.
+
+    Items with one annotator contribute nothing — they are not evidence
+    either way, and counting them as agreement would dilute the rate towards
+    a reassuring number as a corpus grows.
+    """
+    by_item: dict[str, dict[str, str]] = {}
+    for label in labels:
+        if label.field == field:
+            by_item.setdefault(label.item_id, {})[label.annotator] = label.label
+
+    compared = agreed = 0
+    pairs: Counter[tuple[str, str]] = Counter()
+    people: set[str] = set()
+    for answers in by_item.values():
+        if len(answers) < 2:
+            continue
+        people.update(answers)
+        for left, right in combinations(sorted(answers), 2):
+            compared += 1
+            if answers[left] == answers[right]:
+                agreed += 1
+            else:
+                first, second = sorted((answers[left], answers[right]))
+                pairs[(first, second)] += 1
+
+    return AnnotatorAgreement(
+        field=field,
+        compared=compared,
+        agreed=agreed,
+        pairs=tuple((a, b, n) for (a, b), n in pairs.most_common(top)),
+        annotators=tuple(sorted(people)),
+    )

@@ -23,6 +23,7 @@ from .budget import BudgetGuard
 from .cache import VerdictCache, cache_key
 from .calibration import IdentityCalibrator
 from .calibration.base import Calibrator
+from .calibration.quality import reliability
 from .checks import CheckContext, run_checks
 from .checks.corpus import label_shares
 from .config import RunConfig, load_run
@@ -33,7 +34,15 @@ from .judges.panel import majority, sample_items
 from .judges.prompts import LabelCorrectTask, label_is_judgeable
 from .judges.providers import build_provider
 from .judges.screening import JudgeHealth, screen, unreadable_items
-from .metrics.agreement import effective_votes, fuzzy_pairs, leniency
+from .metrics.agreement import annotator_agreement, effective_votes, fuzzy_pairs, leniency
+from .metrics.classification import (
+    TreeBucket,
+    bucket,
+    classify,
+    confusion_direction,
+    judge_direction,
+    primary_labels,
+)
 from .plan import Plan, estimate_cost, plan_run
 from .read import index_items, read_labels, read_outputs
 from .report import render
@@ -449,6 +458,22 @@ def panel_analysis(
 
     excluded = {row.judge_id for row in health if row.excluded_from_panel}
     members = tuple(m for m in panel.members if m not in excluded)
+
+    if len(members) < 2:
+        # Config refuses a configured panel of one because every number a
+        # panel exists for is undefined there. Exclusions can produce the
+        # same state at runtime, and it is the same non-answer: one judge's
+        # verdict relabelled as a consensus would be the worst of both.
+        return [], {
+            "members": list(members),
+            "excluded": sorted(excluded),
+            "sampled_items": len(set(sample_items(tuple(dataset.items), panel.sample))),
+            "collapsed": (
+                f"only {len(members)} of {len(panel.members)} judges survived screening. "
+                "A panel needs two to have an opinion about — no agreement, no dissent "
+                "and no effective vote count can be computed, so none are reported."
+            ),
+        }
     sample = set(sample_items(tuple(dataset.items), panel.sample))
     in_panel = [
         v for v in verdicts if v.judge_id in set(panel.members) and v.item_id in sample
@@ -538,6 +563,210 @@ def panel_analysis(
     }
 
 
+def human_findings(run_id: str, config: RunConfig, dataset: Dataset) -> list[Finding]:
+    """One row per labelled item: was it right, and if not, what kind of wrong.
+
+    The aggregates say how often; this says which, and puts the bucket on the
+    row so a reviewer opening the item knows whether they are looking at a
+    sibling, a hedge or a misread before they start.
+    """
+    advice = {
+        TreeBucket.RIGHT_PARENT: "a sibling — the boundary between two definitions",
+        TreeBucket.TOO_SHALLOW: "stopped at a parent — hedging, not misreading",
+        TreeBucket.WRONG: "a different branch — the model is not reading the item",
+        TreeBucket.UNKNOWN: "not a label in this taxonomy at all",
+        TreeBucket.ABSTAINED: "declined to pick a label",
+    }
+    findings: list[Finding] = []
+    for name, spec in config.schema.fields.items():
+        if spec.kind is not FieldKind.ASSIGNED:
+            continue
+        taxonomy = config.taxonomy_for(name)
+        if taxonomy is None:
+            continue
+        for item_id, answer in primary_labels(dataset.labels, name).items():
+            output = dataset.outputs.get(item_id)
+            if output is None:
+                continue
+            placed = bucket(output.get(name), answer, taxonomy)
+            findings.append(
+                Finding(
+                    run_id=run_id,
+                    check="label_tree_bucket",
+                    grain=Grain.FIELD,
+                    # An abstention is not a wrong answer. It has its own
+                    # check, and failing it here would count a taxonomy gap
+                    # as a model error.
+                    status=(
+                        Status.PASS
+                        if placed is TreeBucket.EXACT
+                        else Status.UNSCORED
+                        if placed is TreeBucket.ABSTAINED
+                        else Status.FAIL
+                    ),
+                    item_id=item_id,
+                    field=name,
+                    evidence={
+                        "bucket": placed.value,
+                        "human": answer,
+                        "assigned": output.get(name),
+                        "why": advice.get(placed, ""),
+                    },
+                )
+            )
+    return findings
+
+
+def against_humans(
+    config: RunConfig, dataset: Dataset, verdicts: Sequence[Verdict], modes: Mapping[str, Mode]
+) -> dict[str, Any]:
+    """Everything the human answers unlock, per field — mode 1 and mode 2.
+
+    Labels reach this function and no earlier. Downstream of the judge they
+    are used for exactly four things, and three of them are here: scoring the
+    model, scoring the judge, and asking whether the taxonomy is crisp. The
+    fourth, fitting a calibration, arrives at M5b.
+    """
+    out: dict[str, Any] = {}
+    floor = int(config.settings.value("min_n_per_label"))
+    top_pairs = int(config.settings.value("fuzzy_pair_report"))
+
+    for name, spec in config.schema.fields.items():
+        if spec.kind is not FieldKind.ASSIGNED or modes.get(name, Mode.NO_LABELS) < Mode.LABELLED:
+            continue
+        taxonomy = config.taxonomy_for(name)
+        if taxonomy is None:
+            continue
+        scored = classify(
+            name, dataset.outputs, dataset.labels, taxonomy,
+            label_floor=floor, top_confusions=max(top_pairs * 2, 10),
+        )
+        entry: dict[str, Any] = {
+            "n": scored.n,
+            "macro_f1": scored.macro_f1,
+            "accuracy": scored.accuracy,
+            "majority_baseline": scored.majority_baseline,
+            "beats_majority": scored.beats_majority,
+            "buckets": {k.value: v for k, v in scored.buckets.items()},
+            "labels": [
+                {
+                    "label": row.label,
+                    "support": row.support,
+                    "precision": row.precision,
+                    "recall": row.recall,
+                    "f1": row.f1,
+                    "under_floor": row.under_floor,
+                    "weak": row.weak,
+                }
+                for row in scored.scores
+            ],
+            "confusion": [
+                {"truth": c.truth, "predicted": c.predicted, "n": c.n} for c in scored.confusion
+            ],
+            "confusion_direction": confusion_direction(scored.confusion, top=top_pairs),
+            "weak_labels": [row.label for row in scored.weak_labels],
+        }
+
+        if modes.get(name) is Mode.DOUBLE_LABELLED:
+            humans = annotator_agreement(dataset.labels, name, top=top_pairs)
+            entry["annotators"] = {
+                "compared": humans.compared,
+                "agreement": humans.agreement,
+                "disagreements": humans.disagreements,
+                "concentration": humans.concentration,
+                "who": list(humans.annotators),
+                "pairs": [
+                    {"left": a, "right": b, "n": n} for a, b, n in humans.pairs
+                ],
+            }
+        out[name] = entry
+
+    fields = tuple(
+        name
+        for name, spec in config.schema.fields.items()
+        if spec.kind is FieldKind.ASSIGNED and modes.get(name, Mode.NO_LABELS) >= Mode.LABELLED
+    )
+    directions = judge_direction(verdicts, dataset.outputs, dataset.labels, fields)
+    judges: list[dict[str, Any]] = []
+    for row in directions:
+        stated, happened = _confidence_pairs(verdicts, row.judge_id, dataset, fields)
+        curve = reliability(stated, happened)
+        judges.append(
+            {
+                "judge": row.judge_id,
+                "scored": row.scored,
+                "accuracy": row.accuracy,
+                "always_approve_accuracy": row.always_approve_accuracy,
+                "beats_always_approve": (
+                    None
+                    if row.accuracy is None or row.always_approve_accuracy is None
+                    else row.accuracy > row.always_approve_accuracy
+                ),
+                "approves_wrong": row.approves_wrong_rate,
+                "rejects_right": row.rejects_right_rate,
+                "leaning": row.leaning,
+                "confidence": {
+                    "n": curve.n,
+                    "ece": curve.ece,
+                    "brier": curve.brier,
+                    "brier_base_rate": curve.brier_base_rate,
+                    "beats_base_rate": curve.beats_base_rate,
+                    "broken": curve.broken,
+                    "direction": curve.direction,
+                    "bins": [
+                        {
+                            "low": b.low,
+                            "high": b.high,
+                            "n": b.n,
+                            "stated": b.stated,
+                            "observed": b.observed,
+                        }
+                        for b in curve.bins
+                        if b.reportable
+                    ],
+                },
+            }
+        )
+    return {"fields": out, "judges": judges}
+
+
+def _confidence_pairs(
+    verdicts: Sequence[Verdict],
+    judge_id: str,
+    dataset: Dataset,
+    fields: Sequence[str],
+) -> tuple[list[float], list[bool]]:
+    """What the judge claimed, and whether it turned out to be so.
+
+    "Confidence" is read as confidence *in the judge's own verdict*, so a
+    confident rejection that was right counts as a hit. Reading it as
+    confidence that the label is correct would score every honest rejection
+    as a miss.
+    """
+    from .metrics.classification import primary_labels
+
+    truth: dict[tuple[str, str], str] = {}
+    for name in fields:
+        for item_id, answer in primary_labels(dataset.labels, name).items():
+            truth[(item_id, name)] = answer
+
+    stated: list[float] = []
+    happened: list[bool] = []
+    for verdict in verdicts:
+        if verdict.judge_id != judge_id or verdict.status is Status.UNSCORED:
+            continue
+        if verdict.raw_confidence is None:
+            continue
+        human = truth.get((verdict.item_id, verdict.field))
+        output = dataset.outputs.get(verdict.item_id)
+        if human is None or output is None:
+            continue
+        really_right = str(output.get(verdict.field)) == human
+        stated.append(verdict.raw_confidence)
+        happened.append((verdict.status is Status.PASS) == really_right)
+    return stated, happened
+
+
 def grain_rates(findings: Sequence[Finding]) -> dict[str, Any]:
     """Pass rates at both grains. The item one is the one a consumer needs.
 
@@ -614,11 +843,19 @@ def what_this_run_cannot_tell_you(
             "cross-field agreement is the only check reading these fields today.\n"
             "specificity, copy ratio, boilerplate and the claim judge arrive at M6"
         )
-    if any(mode >= Mode.LABELLED for mode in modes.values()):
-        labelled = sorted(n for n, m in modes.items() if m >= Mode.LABELLED)
+    unlabelled = sorted(n for n, m in modes.items() if m is Mode.NO_LABELS)
+    if unlabelled:
         lines.append(
-            f"how often the judge agrees with the humans on {', '.join(labelled)}\n"
-            "labels are loaded and untouched — grading the judge against them is M5"
+            f"how accurate {', '.join(unlabelled)} actually is\n"
+            "no human answers for this field, so there is nothing to score it against. "
+            "~100 labelled rows would unlock accuracy, macro F1 and the confusion matrix."
+        )
+    single = sorted(n for n, m in modes.items() if m is Mode.LABELLED)
+    if single:
+        lines.append(
+            f"whether the taxonomy itself is crisp for {', '.join(single)}\n"
+            "one annotator cannot tell you whether two people can separate two labels. "
+            "A second opinion on ~100 items would."
         )
     if config.judges.panel is None:
         lines.append(
@@ -777,10 +1014,13 @@ def _analyse(
     )
     free_findings, skipped = run_checks(check_ctx)
     panel_findings, panel = panel_analysis(config, dataset, verdicts, health)
+    humans = against_humans(config, dataset, verdicts, modes)
+    label_findings = human_findings(run_id, config, dataset)
     findings = [
         *free_findings,
         *to_findings(run_id, config, dataset, verdicts),
         *panel_findings,
+        *label_findings,
     ]
     calibrator: Calibrator = IdentityCalibrator()
     risk_rows, strategy_id = build_triage(config, dataset, verdicts, calibrator)
@@ -853,6 +1093,7 @@ def _analyse(
             {"check": s.check, "field": s.field, "reason": s.reason} for s in skipped
         ],
         "panel": panel,
+        "vs_humans": humans,
         "gates": {
             "measurement_sound": {
                 "status": gates.one.status,
@@ -902,6 +1143,7 @@ def _analyse(
         findings=findings,
         skipped=skipped,
         panel=panel,
+        humans=humans,
         gates=gates,
         risk_rows=risk_rows,
         verdicts=verdicts,
