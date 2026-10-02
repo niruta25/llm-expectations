@@ -12,6 +12,7 @@ to receive them through.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -33,7 +34,13 @@ from .gates import Gates, gate_one, gate_two
 from .judges.base import Judge, JudgeTask, Provider, ReplyOutcome
 from .judges.panel import CHECK_ID as PANEL_CHECK
 from .judges.panel import majority, sample_items
-from .judges.prompts import LabelCorrectTask, label_is_judgeable
+from .judges.prompts import (
+    CLAIM_TOKENS,
+    ClaimSupportTask,
+    LabelCorrectTask,
+    free_text_is_judgeable,
+    label_is_judgeable,
+)
 from .judges.providers import build_provider
 from .judges.screening import JudgeHealth, screen, unreadable_items
 from .metrics.agreement import annotator_agreement, effective_votes, fuzzy_pairs, leniency
@@ -247,6 +254,74 @@ def _assigned_work(
             yield field_spec, task, taxonomy, items[item_id], output
 
 
+def check_context(
+    config: RunConfig, dataset: Dataset, run_id: str, previous: Mapping[str, Any] | None = None
+) -> CheckContext:
+    return CheckContext(
+        run_id=run_id,
+        schema=config.schema,
+        settings=config.settings,
+        items=dataset.items,
+        outputs=dataset.outputs,
+        taxonomies=config.taxonomies,
+        previous=previous or {},
+    )
+
+
+def free_text_plan(
+    config: RunConfig,
+    items: Mapping[str, Item],
+    outputs: Mapping[str, Output],
+    flagged: Mapping[str, set[str]],
+) -> dict[str, tuple[tuple[str, ...], tuple[str, ...]]]:
+    """Which free-text rows to judge: the suspicious ones, plus an audit.
+
+    This is the part that makes free text cheaper than assigned, and it is
+    the opposite of what you would guess. The assigned free checks catch
+    *format* problems, so a perfectly formed wrong label sails through and
+    the triage judge has to see everything. The free-text checks catch
+    *content* problems — no specific detail, contradicts the label — and
+    those genuinely predict invention, so they gate the expensive call.
+
+    The audit sample is why the gate is measured rather than trusted. Judging
+    a slice of the rows nothing flagged is the only way to find out how much
+    the free checks are missing, and without it "the gate is predictive"
+    would be a claim this library makes about itself without evidence.
+    """
+    rate = float(config.settings.value("free_text_audit_rate"))
+    plan: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+    for name, spec in config.schema.fields.items():
+        if spec.kind is not FieldKind.FREE_TEXT:
+            continue
+        eligible = [
+            i
+            for i in items
+            if (row := outputs.get(i)) is not None and free_text_is_judgeable(row, name)
+        ]
+        suspicious = tuple(sorted(i for i in eligible if name in flagged.get(i, set())))
+        rest = [i for i in eligible if i not in set(suspicious)]
+        # At least one, whenever an audit was asked for and there is anything
+        # to audit. A rate that rounds to zero on a small corpus silently
+        # turns the measurement off, and the gate goes back to being trusted
+        # rather than checked — which is the thing the audit exists to stop.
+        wanted = round(rate * len(rest))
+        if rate > 0 and rest:
+            wanted = max(1, wanted)
+        audit = sample_items(tuple(rest), wanted, seed=f"audit:{name}")
+        plan[name] = (suspicious, tuple(sorted(audit)))
+    return plan
+
+
+def flagged_by_free_checks(findings: Sequence[Finding]) -> dict[str, set[str]]:
+    """Which (item, field) pairs a free check already found fault with."""
+    gates = {"specificity", "copy_ratio", "length_in_bounds", "cross_field_agreement"}
+    out: dict[str, set[str]] = {}
+    for found in findings:
+        if found.check in gates and found.status is Status.FAIL and found.item_id:
+            out.setdefault(found.item_id, set()).add(str(found.field))
+    return out
+
+
 def collect(
     config: RunConfig,
     items: Mapping[str, Item],
@@ -255,8 +330,9 @@ def collect(
     cache: VerdictCache,
     guard: BudgetGuard,
     providers: Mapping[str, Provider],
+    free_text: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]] | None = None,
 ) -> list[Verdict]:
-    """Ask the triage judge, and ask the panel.
+    """Ask the triage judge, the panel, and the claim judge.
 
     The signature is the label-leak guarantee: items and outputs go in, and
     there is no parameter a human label could arrive through. A judge cannot
@@ -300,6 +376,33 @@ def collect(
                     for v in verdicts
                 ):
                     verdicts.append(verdict)
+
+    if triage is not None and free_text and triage.judge in providers:
+        judge = _judge_for(config, triage.judge, providers[triage.judge])
+        model = config.judges.judges[triage.judge].model
+        for name, (suspicious, audit) in sorted(free_text.items()):
+            text_spec = config.schema[name]
+            claims = ClaimSupportTask(
+                style=text_spec.style.value if text_spec.style else "descriptive",
+                max_tokens=max(int(config.settings.value("judge_max_tokens")), CLAIM_TOKENS),
+            )
+            for item_id in (*suspicious, *audit):
+                written = outputs.get(item_id)
+                if written is None:
+                    continue
+                verdict = _ask_cached(
+                    judge, model, claims, items[item_id], written, name, None,
+                    cache=cache, guard=guard,
+                )
+                verdicts.append(
+                    dataclasses.replace(
+                        verdict,
+                        metadata={
+                            **verdict.metadata,
+                            "selected_by": "free check" if item_id in set(suspicious) else "audit",
+                        },
+                    )
+                )
     return verdicts
 
 
@@ -331,7 +434,15 @@ def to_findings(
     triage = config.judges.triage
     ranker = triage.judge if triage is not None else None
     model = config.judges.judges[ranker].model if ranker else None
-    scored = [v for v in verdicts if ranker is None or v.judge_id == ranker]
+    # Label verdicts only. Claim verdicts have their own builder, because
+    # the pass/fail there is a threshold applied to a support rate rather
+    # than the judge's own verdict — and emitting both would count every
+    # judged free-text row twice, in the findings and in the grain rates.
+    scored = [
+        v
+        for v in verdicts
+        if v.check_id == "label_correct" and (ranker is None or v.judge_id == ranker)
+    ]
     judged = {(v.item_id, v.field) for v in scored}
 
     findings = [
@@ -367,7 +478,8 @@ def to_findings(
 
     for name, spec in config.schema.fields.items():
         why = (
-            "the claim judge for free text arrives at M6"
+            "nothing here was flagged by a free check and it was not in the audit "
+            "sample, so no claim judge was paid for it"
             if spec.kind is FieldKind.FREE_TEXT
             else "the label was an abstention, so there is nothing to check it against"
         )
@@ -972,6 +1084,115 @@ def triage_evaluation(
     }
 
 
+def claim_findings(run_id: str, config: RunConfig, verdicts: Sequence[Verdict]) -> list[Finding]:
+    """One finding per judged free-text row, with the invented sentence on it.
+
+    The threshold lives here rather than in the judge: the judge reports which
+    claims the item supports, and ``min_claim_support`` decides whether that
+    rate is good enough. A judge that applied the threshold itself would make
+    the number unchangeable without paying again.
+    """
+    findings: list[Finding] = []
+    for verdict in verdicts:
+        if verdict.check_id != "claims_supported":
+            continue
+        spec = config.schema.fields.get(verdict.field)
+        if spec is None:
+            continue
+        threshold = config.settings.resolve("min_claim_support", spec)
+        rate = verdict.detail.get("support_rate")
+        if verdict.status is Status.UNSCORED or not isinstance(rate, (int, float)):
+            findings.append(
+                Finding(
+                    run_id=run_id,
+                    check="claims_supported",
+                    grain=Grain.FIELD,
+                    status=Status.UNSCORED,
+                    item_id=verdict.item_id,
+                    field=verdict.field,
+                    judge=verdict.judge_id,
+                    evidence={"reason": verdict.reason},
+                )
+            )
+            continue
+        findings.append(
+            Finding(
+                run_id=run_id,
+                check="claims_supported",
+                grain=Grain.FIELD,
+                status=Status.PASS if rate >= threshold.value else Status.FAIL,
+                item_id=verdict.item_id,
+                field=verdict.field,
+                score=float(rate),
+                threshold=threshold.value,
+                threshold_from=threshold.source,
+                judge=verdict.judge_id,
+                evidence={
+                    "unsupported": list(verdict.detail.get("unsupported") or []),
+                    "claims": verdict.detail.get("claims"),
+                    "selected_by": verdict.metadata.get("selected_by"),
+                    **(
+                        {"missing": verdict.detail["missing"]}
+                        if verdict.detail.get("missing")
+                        else {}
+                    ),
+                },
+            )
+        )
+    return findings
+
+
+def free_gate_quality(
+    plan: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]],
+    findings: Sequence[Finding],
+) -> dict[str, Any]:
+    """Did the free checks actually predict invention, or is that folklore?
+
+    DESIGN.md §8 claims the free-text gate is predictive, which is why it is
+    allowed to decide what gets paid for. The audit sample is how that claim
+    gets checked rather than repeated: of the rows nothing flagged, how many
+    did the judge find invention in anyway?
+    """
+    by_selection: dict[str, dict[str, int]] = {}
+    for found in findings:
+        if found.check != "claims_supported" or found.status is Status.UNSCORED:
+            continue
+        bucket = str(found.evidence.get("selected_by") or "unknown")
+        tally = by_selection.setdefault(bucket, {"judged": 0, "failed": 0})
+        tally["judged"] += 1
+        tally["failed"] += int(found.status is Status.FAIL)
+
+    audited = by_selection.get("audit", {"judged": 0, "failed": 0})
+    flagged = by_selection.get("free check", {"judged": 0, "failed": 0})
+    out: dict[str, Any] = {
+        "flagged": flagged,
+        "audited": audited,
+        "fields": {
+            name: {"flagged": len(suspicious), "audited": len(audit)}
+            for name, (suspicious, audit) in plan.items()
+        },
+    }
+    if flagged["judged"]:
+        out["precision"] = flagged["failed"] / flagged["judged"]
+        if not flagged["failed"]:
+            out["gate_note"] = (
+                f"the free checks flagged {flagged['judged']} row(s) and the judge found "
+                "nothing ungrounded in any of them — the gate is spending on rows that "
+                "were fine"
+            )
+    if audited["judged"]:
+        out["miss_rate"] = audited["failed"] / audited["judged"]
+        out["why"] = (
+            f"{audited['failed']} of {audited['judged']} audited rows that no free check "
+            "flagged turned out to have an unsupported claim. That is what the free gate "
+            "is missing, measured rather than assumed."
+            if audited["failed"]
+            else f"none of the {audited['judged']} audited rows that no free check flagged "
+            "had an unsupported claim — the gate held on this sample."
+        )
+    return out
+
+
 def grain_rates(findings: Sequence[Finding]) -> dict[str, Any]:
     """Pass rates at both grains. The item one is the one a consumer needs.
 
@@ -1105,7 +1326,13 @@ def run(
         # actually asked, and the reused ones are reported as cache hits.
         cache.warm_from(reuse / "verdicts.jsonl")
 
-    plan = plan_run(config, dataset.items, dataset.outputs)
+    # The free checks run before anything is spent, because their results
+    # decide which free-text rows are worth paying a judge for.
+    gate_findings, _ = run_checks(check_context(config, dataset, config.run_id, earlier))
+    free_text = free_text_plan(
+        config, dataset.items, dataset.outputs, flagged_by_free_checks(gate_findings)
+    )
+    plan = plan_run(config, dataset.items, dataset.outputs, free_text=free_text)
     guard = BudgetGuard(max_usd=config.budget.max_usd, confirm=config.budget.confirm)
     if not guard.approve(plan, stream=stream, ask=ask):
         cache.close()
@@ -1123,7 +1350,7 @@ def run(
     verdicts = (
         collect(
             config, dataset.items, dataset.outputs,
-            cache=cache, guard=guard, providers=providers,
+            cache=cache, guard=guard, providers=providers, free_text=free_text,
         )
         if providers
         else []
@@ -1140,6 +1367,7 @@ def run(
         collected=[v for v in verdicts if not v.metadata.get("cache_hit")],
         run_yml=config.source,
         previous=earlier,
+        free_text=free_text,
     )
     append_index(
         out,
@@ -1202,6 +1430,12 @@ def analyse_run(directory: Path, *, stream: TextIO | None = None) -> RunResult:
         collected=(),
         run_yml=Path(manifest["run_yml"]),
         previous=earlier,
+        free_text=free_text_plan(
+            config,
+            dataset.items,
+            dataset.outputs,
+            flagged_by_free_checks(run_checks(check_context(config, dataset, directory.name))[0]),
+        ),
     )
 
 
@@ -1216,30 +1450,26 @@ def _analyse(
     collected: Sequence[Verdict],
     run_yml: Path,
     previous: Mapping[str, Any] | None = None,
+    free_text: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]] | None = None,
 ) -> RunResult:
     run_id = directory.name
     modes = detect_modes(config, dataset.labels)
     counts = label_counts(config, dataset.labels)
     health = screen(verdicts, config.settings)
 
-    check_ctx = CheckContext(
-        run_id=run_id,
-        schema=config.schema,
-        settings=config.settings,
-        items=dataset.items,
-        outputs=dataset.outputs,
-        taxonomies=config.taxonomies,
-        previous=previous or {},
-    )
+    check_ctx = check_context(config, dataset, run_id, previous)
     free_findings, skipped = run_checks(check_ctx)
     panel_findings, panel = panel_analysis(config, dataset, verdicts, health)
     humans = against_humans(config, dataset, verdicts, modes)
     label_findings = human_findings(run_id, config, dataset)
+    claims = claim_findings(run_id, config, verdicts)
+    gate_quality = free_gate_quality(free_text or {}, claims)
     findings = [
         *free_findings,
         *to_findings(run_id, config, dataset, verdicts),
         *panel_findings,
         *label_findings,
+        *claims,
     ]
     calibrator, calibration = fit_calibration(config, dataset, verdicts, modes)
     risk_rows, strategy_id = build_triage(config, dataset, verdicts, calibrator)
@@ -1309,6 +1539,7 @@ def _analyse(
         ],
         "panel": panel,
         "vs_humans": humans,
+        "free_text_gate": gate_quality,
         "calibration": calibration,
         "triage_eval": triage_eval,
         "gates": {
@@ -1361,6 +1592,7 @@ def _analyse(
         skipped=skipped,
         panel=panel,
         humans=humans,
+        free_text_gate=gate_quality,
         calibration=calibration,
         triage_eval=triage_eval,
         gates=gates,

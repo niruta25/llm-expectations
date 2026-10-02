@@ -45,6 +45,30 @@ If this example ever reports a confident ranking number, that is a bug in the
 guardrails. Tests that need a corpus Gate 2 and the Platt fit can actually
 run on build one — see the `big_corpus` fixture in `tests/conftest.py`.
 
+## All eight, caught
+
+Every planted defect is now found by the check the manifest says owns it, and
+no clean item is flagged by anything:
+
+```
+item   defect              milestone  caught by
+s-04   wrong_label         M5         label_tree_bucket
+s-07   sibling_confusion   M5         label_tree_bucket
+s-08   too_shallow         M2         valid_leaf
+s-09   invented_label      M2         label_in_taxonomy
+s-10   invented_claim      M6         claims_supported   (audit only)
+s-11   filler              M6         specificity
+s-12   contradicts_field   M2         cross_field_agreement
+s-13   copied              M6         copy_ratio
+```
+
+`s-10` carries the asterisk and it is the honest one. Its summary is specific,
+fluent, the right length and agrees with its label — every free check passes
+it — so the free-text gate does not flag it, and at the default 5% audit rate
+a thirteen-item corpus does not sample it either. The gate is predictive, not
+complete, and the audit is how the report measures that rather than asserting
+otherwise.
+
 ## What lands here today
 
 ```bash

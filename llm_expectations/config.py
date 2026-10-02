@@ -147,6 +147,14 @@ GLOBAL_SETTINGS: Mapping[str, Setting] = {
             bool,
             "refuse to run when a taxonomy's content moved without its version",
         ),
+        _global(
+            "free_text_audit_rate",
+            0.05,
+            float,
+            "share of unflagged free-text rows to judge anyway, so the free gate's own "
+            "miss rate can be measured instead of assumed",
+            (0.0, 1.0),
+        ),
         _global("cost_confirm", True, bool, "ask before spending"),
     )
 }

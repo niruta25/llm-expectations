@@ -18,9 +18,10 @@ from .base import (
     Provider,
     ReplyOutcome,
 )
-from .prompts import LabelCorrectTask
+from .prompts import ClaimSupportTask, LabelCorrectTask
 
 __all__ = [
+    "ClaimSupportTask",
     "Judge",
     "JudgeError",
     "JudgeReply",

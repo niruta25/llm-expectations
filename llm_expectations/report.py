@@ -44,6 +44,11 @@ CHECK_LABELS: Mapping[str, str] = {
     "label_correct": "label is correct",
     "label_correct_panel": "panel says label is correct",
     "label_tree_bucket": "matches the human answer",
+    "length_in_bounds": "length in bounds",
+    "specificity": "specific, not filler",
+    "copy_ratio": "copy ratio",
+    "boilerplate": "boilerplate",
+    "claims_supported": "claims the item supports",
     "free_text": "defect checks",
 }
 ORDER = list(CHECK_LABELS)
@@ -71,6 +76,7 @@ def render(
     skipped: Sequence[Skipped],
     panel: Mapping[str, Any],
     humans: Mapping[str, Any],
+    free_text_gate: Mapping[str, Any],
     calibration: Mapping[str, Any],
     triage_eval: Mapping[str, Any],
     gates: Gates,
@@ -94,6 +100,7 @@ def render(
         out += _vs_humans((humans.get("fields") or {}).get(name), name)
     out += _judges_vs_humans(humans.get("judges") or [])
 
+    out += _free_text_gate(free_text_gate)
     out += _calibration(calibration)
     out += operating_point_table(triage_eval)
     out += _review(
@@ -396,6 +403,12 @@ def _check_line(check: str, group: Sequence[Finding]) -> list[str]:
 
     if corpus:
         found = group[0]
+        if check == "boilerplate":
+            evidence = found.evidence
+            mark = "✗" if found.status is Status.FAIL else "✓"
+            count = f"{evidence.get('near_duplicates', 0)} of {evidence.get('of', 0)}"
+            lines = [f"    {label:<28} {count:>8}   {mark}  near-identical"]
+            return lines + _wrapped(evidence.get("why"))
         value = _value(check, found.score)
         mark = {Status.PASS: "✓", Status.FAIL: "✗", Status.UNSCORED: "○"}[found.status]
         lines = [f"    {label:<28} {value:>8}   {mark}  {_bar(check, found)}".rstrip()]
@@ -481,6 +494,17 @@ def _evidence(found: Finding) -> str:
         return f"{evidence.get('label')!r} is a parent of {children}"
     if found.check == "cross_field_agreement":
         return f"no overlap with {evidence.get('label')} — one of the two is wrong"
+    if found.check == "claims_supported":
+        unsupported = evidence.get("unsupported") or []
+        first = unsupported[0] if unsupported else ""
+        return f"{len(unsupported)} invented: {first!r}" if first else _why(found)
+    if found.check == "specificity":
+        return "nothing here is specific to this item"
+    if found.check == "copy_ratio":
+        return (
+            f"{evidence.get('longest_run')} of {evidence.get('words')} words are one "
+            "lifted run"
+        )
     if found.check == "label_tree_bucket":
         return (
             f"{found.evidence.get('assigned')!r} vs {found.evidence.get('human')!r} — "
@@ -677,6 +701,32 @@ def _confidence(judges: Sequence[Mapping[str, Any]]) -> list[str]:
 
 def _maybe(value: float | None, places: int = 2) -> str:
     return "—" if value is None else f"{value:.{places}f}"
+
+
+def _free_text_gate(gate: Mapping[str, Any]) -> list[str]:
+    """What the free checks saved, and what they cost in missed defects."""
+    if not gate or not gate.get("fields"):
+        return []
+    flagged, audited = gate.get("flagged") or {}, gate.get("audited") or {}
+    judged = flagged.get("judged", 0) + audited.get("judged", 0)
+    if not judged:
+        return []
+
+    lines = ["  FREE-TEXT GATE"]
+    for name, counts in sorted(gate["fields"].items()):
+        lines.append(
+            f"    {name:<22} {counts['flagged']} flagged by a free check, "
+            f"{counts['audited']} audited"
+        )
+    if gate.get("precision") is not None:
+        lines.append(
+            f"    of the flagged rows        {gate['precision']:.0%} had an unsupported claim"
+        )
+    if gate.get("gate_note"):
+        lines += _wrapped(str(gate["gate_note"]), indent=4)
+    if gate.get("why"):
+        lines += _wrapped(str(gate["why"]), indent=4)
+    return lines + [""]
 
 
 def _calibration(calibration: Mapping[str, Any]) -> list[str]:

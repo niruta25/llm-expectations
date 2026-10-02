@@ -3,7 +3,7 @@
 {"item_id": "s-03", "jtbd": "access.password_reset", "summary": "Priya's reset email bounced off her work mail server; resending to her personal address worked.", "outcome": "resolved", "confidence": 0.93}
 {"item_id": "s-04", "jtbd": "product.bug_report", "summary": "Tom's CSV export errors out above roughly 20,000 rows since the update; smaller exports work.", "outcome": "resolved", "confidence": 0.86}
 {"item_id": "s-05", "jtbd": "access.sso_issue", "summary": "Anika's team cannot sign in through Okta since Tuesday: the assertion comes back rejected.", "outcome": "escalated", "confidence": 0.9}
-{"item_id": "s-06", "jtbd": "product.feature_request", "summary": "Ben asked for a dark theme, saying the white background is hard on his eyes after 9pm.", "outcome": "unresolved", "confidence": 0.87}
+{"item_id": "s-06", "jtbd": "product.feature_request", "summary": "Ben asked us to pass on a request for a dark theme; the bright display strains his eyes when he works late.", "outcome": "unresolved", "confidence": 0.87}
 {"item_id": "s-07", "jtbd": "billing.payment_failed", "summary": "Rosa's bank refused the renewal card and sent a fraud alert; she cleared it and wants a retry.", "outcome": "pending", "confidence": 0.62}
 {"item_id": "s-08", "jtbd": "billing", "summary": "Ellis paid a year up front in January, stopped in March, and wants the unused nine months back.", "outcome": "pending", "confidence": 0.55}
 {"item_id": "s-09", "jtbd": "access.login_broken", "summary": "Sam is stuck in a reset loop: the new password is rejected on the next sign-in, four times today.", "outcome": "unresolved", "confidence": 0.71}
