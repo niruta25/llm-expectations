@@ -29,7 +29,7 @@ from .calibration.platt import FieldCalibrator, PlattCalibrator
 from .calibration.quality import reliability
 from .checks import CheckContext, run_checks
 from .checks.corpus import label_shares
-from .config import RunConfig, load_run
+from .config import JudgeSpec, RunConfig, load_run
 from .gates import Gates, gate_one, gate_two
 from .judges.base import Judge, JudgeTask, Provider, ReplyOutcome
 from .judges.panel import CHECK_ID as PANEL_CHECK
@@ -56,6 +56,12 @@ from .plan import Plan, estimate_cost, plan_run
 from .read import index_items, read_labels, read_outputs
 from .report import render
 from .schema import FieldKind, FieldSpec
+from .stability import (
+    StabilityReport,
+    measure_stability,
+    regenerate_sample,
+    write_regenerated,
+)
 from .taxonomy import Taxonomy
 from .triage import TriageContext, build_risk_rows, resolve_strategy
 from .triage.evaluate import compare
@@ -1193,6 +1199,30 @@ def free_gate_quality(
     return out
 
 
+def _stability_metrics(report: StabilityReport | None) -> dict[str, Any]:
+    if report is None:
+        return {}
+    return {
+        "kind": report.kind,
+        "temperature": report.temperature,
+        "runs": report.runs,
+        "sampled": report.sampled,
+        "unreadable": report.unreadable,
+        "note": report.note,
+        "reads_as_broken": report.reads_as_broken,
+        "fields": [
+            {
+                "field": f.field,
+                "compared": f.compared,
+                "agreed": f.agreed,
+                "stability": f.stability,
+                "flipped": [{"item_id": i, "answers": list(a)} for i, a in f.flipped],
+            }
+            for f in report.fields
+        ],
+    }
+
+
 def grain_rates(findings: Sequence[Finding]) -> dict[str, Any]:
     """Pass rates at both grains. The item one is the one a consumer needs.
 
@@ -1347,6 +1377,30 @@ def run(
     providers = {
         judge_id: provider_factory(config.judges.judges[judge_id]) for judge_id in sorted(wanted)
     }
+    stability: StabilityReport | None = None
+    regenerated: list[dict[str, Any]] = []
+    unreadable = 0
+    hook = config.produced_by.regenerate if config.produced_by else None
+    if hook is not None:
+        spec = JudgeSpec(
+            id="regenerate",
+            provider=hook.provider,
+            model=hook.model,
+            api_key_env=hook.api_key_env,
+            endpoint=hook.endpoint,
+            temperature=hook.temperature,
+        )
+        regenerated, unreadable = regenerate_sample(
+            config,
+            dataset.items,
+            provider_factory(spec),
+            fields=tuple(config.schema.fields),
+        )
+        stability = measure_stability(
+            config, dataset.outputs, regenerated, unreadable=unreadable
+        )
+        write_regenerated(directory, regenerated)
+
     verdicts = (
         collect(
             config, dataset.items, dataset.outputs,
@@ -1368,6 +1422,7 @@ def run(
         run_yml=config.source,
         previous=earlier,
         free_text=free_text,
+        stability=stability,
     )
     append_index(
         out,
@@ -1451,6 +1506,7 @@ def _analyse(
     run_yml: Path,
     previous: Mapping[str, Any] | None = None,
     free_text: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]] | None = None,
+    stability: StabilityReport | None = None,
 ) -> RunResult:
     run_id = directory.name
     modes = detect_modes(config, dataset.labels)
@@ -1464,6 +1520,7 @@ def _analyse(
     label_findings = human_findings(run_id, config, dataset)
     claims = claim_findings(run_id, config, verdicts)
     gate_quality = free_gate_quality(free_text or {}, claims)
+    stability_metrics = _stability_metrics(stability)
     findings = [
         *free_findings,
         *to_findings(run_id, config, dataset, verdicts),
@@ -1540,6 +1597,7 @@ def _analyse(
         "panel": panel,
         "vs_humans": humans,
         "free_text_gate": gate_quality,
+        "stability": stability_metrics,
         "calibration": calibration,
         "triage_eval": triage_eval,
         "gates": {
@@ -1593,6 +1651,7 @@ def _analyse(
         panel=panel,
         humans=humans,
         free_text_gate=gate_quality,
+        stability=stability_metrics,
         calibration=calibration,
         triage_eval=triage_eval,
         gates=gates,

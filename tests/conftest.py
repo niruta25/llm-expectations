@@ -279,3 +279,77 @@ def provider(scripted):
         ),
         default=reply(True, 0.92, "the label matches"),
     )
+
+
+@pytest.fixture
+def two_runs(tmp_path, big_corpus):
+    """Two finished runs over one items file, from two prompt versions.
+
+    The shape a comparison is actually for: same corpus, same labels, two
+    prompts. Returns the two run directories.
+    """
+    import dataclasses
+    import json
+    import random
+
+    from llm_expectations.config import Budget, load_run
+    from llm_expectations.judges.fake import FakeProvider, reply
+    from llm_expectations.run import run
+
+    LABELS = [
+        "billing.payment_failed",
+        "billing.card_declined",
+        "billing.refund_request",
+        "access.password_reset",
+        "access.sso_issue",
+        "product.bug_report",
+        "product.feature_request",
+    ]
+
+    def build(n=400, rates=(0.30, 0.15), prompts=("p7", "p8"), taxonomy_of_b=None):
+        root, _ = big_corpus(n=n, error_rate=rates[0])
+        truth = {
+            json.loads(line)["item_id"]: json.loads(line)["label"]
+            for line in (root / "labels.jsonl").read_text().splitlines()
+        }
+        directories = []
+        for prompt, rate in zip(prompts, rates, strict=True):
+            rng = random.Random(hash(prompt) % 997)
+            rows = []
+            for item_id, real in truth.items():
+                wrong = rng.random() < rate
+                rows.append(
+                    {
+                        "item_id": item_id,
+                        "jtbd": rng.choice([x for x in LABELS if x != real]) if wrong else real,
+                    }
+                )
+            outputs = root / f"outputs_{prompt}.jsonl"
+            outputs.write_text(
+                "\n".join(json.dumps(r) for r in rows), encoding="utf-8"
+            )
+            run_file = root / f"run_{prompt}.yml"
+            run_file.write_text(
+                f"run_id: jtbd-{prompt}\nitems: items.jsonl\noutputs: outputs_{prompt}.jsonl\n"
+                f"labels: labels.jsonl\nschema: schema.yml\ntaxonomy: taxonomy.yml\n"
+                f"judges: judges.yml\nproduced_by:\n  model: claude-sonnet-5\n"
+                f"  prompt_version: {prompt}\n",
+                encoding="utf-8",
+            )
+            config = dataclasses.replace(load_run(run_file), budget=Budget(None, False))
+            result = run(
+                config,
+                out=tmp_path / "out",
+                provider_factory=lambda spec: FakeProvider(
+                    model="m", default=reply(True, 0.9, "ok")
+                ),
+            )
+            directories.append(result.directory)
+
+        if taxonomy_of_b is not None:
+            manifest = json.loads((directories[1] / "run.json").read_text())
+            manifest["taxonomies"] = {taxonomy_of_b: "adifferenthash"}
+            (directories[1] / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return root, directories[0], directories[1]
+
+    return build

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from llm_expectations.cli import main
 
 from .conftest import EXAMPLE
@@ -39,9 +41,9 @@ def test_a_config_error_is_a_message_not_a_traceback(tmp_path, capsys):
     assert capsys.readouterr().err.startswith("error:")
 
 
-def test_compare_says_when_it_arrives(capsys):
-    assert main(["compare"]) == 1
-    assert "M7" in capsys.readouterr().out
+def test_compare_needs_two_directories(capsys):
+    with pytest.raises(SystemExit):
+        main(["compare"])
 
 
 def test_run_then_analyse(tmp_path, monkeypatch, capsys, scripted):

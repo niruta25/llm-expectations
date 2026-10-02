@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import __version__
 from .calibration.base import StaleCalibration
+from .compare import ComparisonError
 from .config import ConfigError, RunConfig
 from .read import ReadError
 from .taxonomy import TaxonomyError, load_taxonomy
@@ -54,7 +55,15 @@ def _parser() -> argparse.ArgumentParser:
     check = sub.add_parser("check", help="static health check on a taxonomy file")
     check.add_argument("taxonomy", type=Path)
 
-    sub.add_parser("compare", help="two runs, head to head — M7")
+    head_to_head = sub.add_parser("compare", help="two runs, head to head")
+    head_to_head.add_argument("a", type=Path, help="the earlier run directory")
+    head_to_head.add_argument("b", type=Path, help="the later run directory")
+    head_to_head.add_argument(
+        "--migration",
+        type=Path,
+        default=None,
+        help="a taxonomy migration file, required when the two runs used different versions",
+    )
     return parser
 
 
@@ -75,10 +84,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "check":
             return _check(args)
         if args.command == "compare":
-            print("compare arrives at M7. Until then, two run directories under out/ hold")
-            print("everything it will read — nothing needs re-collecting.")
-            return 1
-    except (ConfigError, ReadError, TaxonomyError, StaleCalibration) as exc:
+            return _compare(args)
+    except (
+        ComparisonError,
+        ConfigError,
+        ReadError,
+        StaleCalibration,
+        TaxonomyError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -138,6 +151,18 @@ def _analyse(args: argparse.Namespace) -> int:
     result = analyse_run(args.directory)
     print(result.report)
     print("  re-analysed from cache. Zero model calls, zero cost.")
+    return 0
+
+
+def _compare(args: argparse.Namespace) -> int:
+    """Two finished runs, read off disk. Zero model calls."""
+    from .compare import load_and_compare
+    from .report import comparison_report
+
+    comparison = load_and_compare(args.a, args.b, migration_path=args.migration)
+    for line in comparison_report(comparison):
+        print(line)
+    print("  Read from disk. Zero model calls, zero cost.")
     return 0
 
 

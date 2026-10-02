@@ -47,6 +47,7 @@ __all__ = [
     "JudgeSpec",
     "PanelSpec",
     "ProducedBy",
+    "Regenerate",
     "Resolved",
     "RunConfig",
     "Settings",
@@ -290,6 +291,44 @@ class Judges:
 
 
 @dataclass(frozen=True, slots=True)
+class Regenerate:
+    """How to re-ask the producing model, for the stability check.
+
+    Three rules keep it contained (DESIGN.md §5):
+
+    **Sample only.** A diagnostic, not a re-run. ``sample`` is required and
+    capped, because regenerating a corpus to measure its stability costs as
+    much as producing it did.
+
+    **Never overwrites your outputs.** Results go to their own file. An
+    accidental overwrite would destroy the thing under test.
+
+    **Temperature decides which number you get**, and the two mean different
+    things, so they are never averaged together.
+    """
+
+    provider: str
+    model: str
+    prompt_file: Path
+    api_key_env: str | None = None
+    endpoint: str | None = None
+    temperature: float = 0.0
+    sample: int = 100
+    runs: int = 2
+
+    @property
+    def measures(self) -> str:
+        """Which kind of stability this configuration can report.
+
+        At temperature 0 a disagreement means your serving stack is
+        nondeterministic, which is a different problem from a label being
+        fragile — and reporting both as one number would hide whichever you
+        have.
+        """
+        return "serving" if self.temperature == 0 else "decision"
+
+
+@dataclass(frozen=True, slots=True)
 class ProducedBy:
     """What made the outputs. Stamped onto every result.
 
@@ -299,6 +338,7 @@ class ProducedBy:
 
     model: str
     prompt_version: str
+    regenerate: Regenerate | None = None
     extra: Mapping[str, Any] | None = None
 
 
@@ -677,8 +717,84 @@ def _produced_by(raw: Any, where: Path) -> ProducedBy | None:
             f"{where}: 'produced_by.prompt_version' is required. Without it, two runs across "
             "a prompt change look comparable and are not."
         )
-    extra = {k: v for k, v in raw.items() if k not in {"model", "prompt_version"}}
-    return ProducedBy(model=model, prompt_version=prompt_version, extra=extra or None)
+    known = {"model", "prompt_version", "regenerate"}
+    extra = {k: v for k, v in raw.items() if k not in known}
+    return ProducedBy(
+        model=model,
+        prompt_version=prompt_version,
+        regenerate=_regenerate(raw.get("regenerate"), where),
+        extra=extra or None,
+    )
+
+
+def _regenerate(raw: Any, where: Path) -> Regenerate | None:
+    """Parse the optional stability hook. No hook, no stability check."""
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ConfigError(f"{where}: 'produced_by.regenerate' must be a mapping")
+    known = {
+        "provider", "model", "prompt_file", "api_key_env", "endpoint",
+        "temperature", "sample", "runs",
+    }
+    unknown = set(raw) - known
+    if unknown:
+        raise ConfigError(f"{where}: 'regenerate' has unknown key(s) {sorted(unknown)}")
+
+    provider = raw.get("provider")
+    if provider not in PROVIDERS:
+        raise ConfigError(
+            f"{where}: regenerate.provider is {provider!r}. Permitted: {sorted(PROVIDERS)}"
+        )
+    model = raw.get("model")
+    if not isinstance(model, str) or not model:
+        raise ConfigError(f"{where}: 'regenerate.model' is required")
+    prompt_file = raw.get("prompt_file")
+    if not isinstance(prompt_file, str) or not prompt_file:
+        raise ConfigError(
+            f"{where}: 'regenerate.prompt_file' is required — the stability check has to "
+            "send the same prompt that produced the outputs, and it cannot guess it"
+        )
+
+    sample = raw.get("sample", 100)
+    if isinstance(sample, bool) or not isinstance(sample, int) or sample < 1:
+        raise ConfigError(
+            f"{where}: 'regenerate.sample' must be a positive whole number. This is a "
+            "diagnostic on a sample, never a re-run of the corpus — regenerating "
+            "everything costs what producing it cost."
+        )
+    runs = raw.get("runs", 2)
+    if isinstance(runs, bool) or not isinstance(runs, int) or runs < 2:
+        raise ConfigError(
+            f"{where}: 'regenerate.runs' must be at least 2. One run cannot disagree "
+            "with itself, so there is no stability to measure."
+        )
+
+    api_key_env = raw.get("api_key_env")
+    if api_key_env is not None and (
+        not isinstance(api_key_env, str) or not _ENV_NAME.fullmatch(api_key_env)
+    ):
+        raise ConfigError(
+            f"{where}: regenerate.api_key_env={api_key_env!r} is not a valid environment "
+            "variable name. This field takes the NAME of the variable holding the key."
+        )
+    temperature = raw.get("temperature", 0.0)
+    if isinstance(temperature, bool) or not isinstance(temperature, (int, float)):
+        raise ConfigError(f"{where}: 'regenerate.temperature' must be a number")
+    endpoint = raw.get("endpoint")
+    if provider == "openai_compatible" and not endpoint:
+        raise ConfigError(f"{where}: regenerate is openai_compatible and needs an 'endpoint'")
+
+    return Regenerate(
+        provider=str(provider),
+        model=model,
+        prompt_file=(where.parent / prompt_file).resolve(),
+        api_key_env=api_key_env,
+        endpoint=str(endpoint) if endpoint else None,
+        temperature=float(temperature),
+        sample=sample,
+        runs=runs,
+    )
 
 
 def _budget(raw: Any, where: Path) -> Budget:
