@@ -173,7 +173,12 @@ TRIAGE_STRATEGIES: tuple[str, ...] = (
     "calibrated_risk",
 )
 
-PROVIDERS = frozenset({"anthropic", "openai", "openai_compatible"})
+#: ``fake`` answers from a hash of the prompt and reaches no network. It is
+#: here so the worked example runs without an API key; Gate 1 stops any run
+#: that uses one, because scripted verdicts are indistinguishable from real
+#: ones on the page.
+FAKE_PROVIDER = "fake"
+PROVIDERS = frozenset({"anthropic", "openai", "openai_compatible", FAKE_PROVIDER})
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 DEFAULT_BUDGETS: tuple[float, ...] = (0.005, 0.01, 0.02, 0.05, 0.10, 0.20)
 
@@ -558,7 +563,11 @@ def _judge(entry: Any, where: str) -> JudgeSpec:
         )
 
     model = entry.get("model")
-    if not isinstance(model, str) or not model:
+    if provider == FAKE_PROVIDER:
+        # There is no model to name. Defaulting it keeps the scripted judge
+        # one line in a config file, which is the point of having it.
+        model = model if isinstance(model, str) and model else "scripted"
+    elif not isinstance(model, str) or not model:
         raise ConfigError(f"{where}: judge {judge_id!r} needs a 'model'")
 
     endpoint = entry.get("endpoint")

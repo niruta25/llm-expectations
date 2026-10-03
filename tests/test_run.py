@@ -137,7 +137,10 @@ class TestModes:
         modes = detect_modes(example, load_dataset(example).labels)
         assert modes["jtbd"] is Mode.DOUBLE_LABELLED  # ann-2 second-opinions four items
         assert modes["outcome"] is Mode.LABELLED
-        assert modes["summary"] is Mode.NO_LABELS
+        # `summary` carries human *defect ratings*, which is what mode 1 means
+        # for free text: there is no single right summary to compare against,
+        # so a person marks boxes instead.
+        assert modes["summary"] is Mode.LABELLED
 
     def test_mode_reports_the_data_shape_and_the_floors_do_the_refusing(
         self, example, provider, tmp_path

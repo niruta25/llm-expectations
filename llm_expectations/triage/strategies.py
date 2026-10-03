@@ -1,9 +1,10 @@
-"""The ranking strategies. M1 ships the one that needs no labels.
+"""The ranking strategies: one default, and four that exist to be beaten.
 
 ``raw_confidence`` is the default when nothing has been calibrated, and it is
 stamped uncalibrated everywhere it appears. The four baselines it has to beat —
-random, output length, majority label, panel disagreement — arrive with Gate 2
-at M4, and the table that settles which one wins arrives at M5b.
+random, output length, majority label, panel disagreement — are scored beside
+it by Gate 2, and Error Recall@Budget settles which one wins at the budget you
+actually review at.
 """
 
 from __future__ import annotations
@@ -240,9 +241,10 @@ def resolve_strategy(requested: str, *, calibrated: bool) -> TriageStrategy:
     """Pick the strategy, resolving ``auto`` against what is actually fitted.
 
     ``auto`` means ``calibrated_risk`` when a calibration exists and
-    ``raw_confidence`` when one does not. Until M5b there is no fitted
-    calibrator, so ``auto`` resolves to the honest option and the report says
-    which rather than implying the other.
+    ``raw_confidence`` when one does not. Asking for ``calibrated_risk``
+    outright when nothing was fitted is refused rather than quietly downgraded:
+    a report that said "calibrated" about a raw ranking would be the lie this
+    whole section exists to prevent.
     """
     if requested == "auto":
         requested = "calibrated_risk" if calibrated else "raw_confidence"

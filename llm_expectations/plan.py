@@ -48,9 +48,19 @@ PRICES: Mapping[str, Pricing] = {
 
 CHARS_PER_TOKEN = 4  # a rough, deliberately generous divisor
 
+#: What `provider: fake` reports as its model. It costs nothing because it
+#: asks nothing.
+SCRIPTED_MODEL = "scripted"
+
 
 def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float | None:
-    """None means "this model is not in the price table", not "free"."""
+    """None means "this model is not in the price table", not "free".
+
+    The one model that really is free is the scripted judge, which reaches no
+    network. Reporting that as unknown would be as wrong as guessing a price.
+    """
+    if model == SCRIPTED_MODEL:
+        return 0.0
     price = PRICES.get(model)
     if price is None:
         return None
@@ -116,10 +126,12 @@ def plan_run(
     cached_keys: frozenset[str] = frozenset(),
     free_text: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]] | None = None,
 ) -> Plan:
-    """Count the calls M1 would make, and price them.
+    """Count the calls a run would make, and price them.
 
-    Only the triage job exists at M1. The panel lands at M3 and the claim judge
-    at M6; both will add a ``PlannedJob`` here rather than a second estimator.
+    Each job that spends money adds a ``PlannedJob``, so the panel and the
+    claim judge appear beside triage rather than folded into it. A combined
+    total would hide the thing worth seeing: the claim judge is a fraction of
+    the corpus, and the triage judge is nearly all of it.
     """
     from .judges.prompts import LabelCorrectTask, label_is_judgeable
 

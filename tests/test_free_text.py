@@ -327,3 +327,89 @@ class TestTheClaimJudgeOnTheFixture:
         # miss rate is non-zero and the report says so.
         assert gate["miss_rate"] > 0
         assert "what the free gate is missing, measured rather than assumed" in gate["why"]
+
+
+class TestDefectRatings:
+    """Mode 1 for free text: people mark boxes, not better summaries."""
+
+    @staticmethod
+    def agreement(marks, flagged):
+        from llm_expectations.metrics.classification import defect_agreement
+        from llm_expectations.types import Label
+
+        labels = [
+            Label(item, "summary", mark, "ann-1") for item, marks_ in marks.items()
+            for mark in marks_
+        ]
+        return {row.defect: row for row in defect_agreement("summary", labels, flagged)}
+
+    def test_a_check_and_a_person_agreeing_scores_one(self):
+        rows = self.agreement(
+            {"s-1": ["made_up"], "s-2": ["none"]},
+            {"claims_supported": {"s-1": True, "s-2": False}},
+        )
+        assert rows["made_up"].agreement == 1.0
+
+    def test_a_check_that_fires_where_people_do_not_is_named_as_over_flagging(self):
+        rows = self.agreement(
+            {f"s-{i}": ["none"] for i in range(10)},
+            {"specificity": {f"s-{i}": True for i in range(10)}},
+        )
+        assert rows["too_generic"].agreement == 0.0
+        assert rows["too_generic"].leaning == "over-flags"
+
+    def test_a_check_that_misses_what_people_catch_is_named_as_under_flagging(self):
+        rows = self.agreement(
+            {f"s-{i}": ["made_up"] for i in range(10)},
+            {"claims_supported": {f"s-{i}": False for i in range(10)}},
+        )
+        assert rows["made_up"].leaning == "under-flags"
+
+    def test_an_unrated_row_is_not_counted_as_agreement(self):
+        # Treating unrated rows as clean would inflate every number here as
+        # a corpus grew.
+        rows = self.agreement(
+            {"s-1": ["none"]},
+            {"specificity": {"s-1": False, "s-2": False, "s-3": False}},
+        )
+        assert rows["too_generic"].compared == 1
+
+    def test_a_defect_with_no_matching_check_is_absent_rather_than_zero(self):
+        rows = self.agreement({"s-1": ["made_up"]}, {})
+        assert rows == {}
+
+    def test_rated_clean_is_distinguishable_from_unrated(self):
+        from llm_expectations.metrics.classification import RATED_CLEAN
+
+        rated = self.agreement(
+            {"s-1": [RATED_CLEAN]}, {"specificity": {"s-1": False, "s-2": False}}
+        )
+        unrated = self.agreement({}, {"specificity": {"s-1": False, "s-2": False}})
+        assert rated["too_generic"].compared == 1
+        assert unrated == {}
+
+    def test_the_fixture_reports_an_agreement_per_box(self, tmp_path):
+        from llm_expectations.cli import main
+
+        assert main(
+            ["run", str(EXAMPLE / "run-offline.yml"), "--out", str(tmp_path), "--yes"]
+        ) == 0
+        directory = next(p for p in tmp_path.iterdir() if p.is_dir())
+        report = (directory / "report.md").read_text()
+        assert "vs human defect ratings" in report
+        for defect in ("made_up", "too_generic", "contradicts", "missing"):
+            assert defect in report
+
+    def test_each_box_carries_its_own_denominator(self, tmp_path):
+        import json
+
+        from llm_expectations.cli import main
+
+        # Each box is compared against a different check, and those checks do
+        # not all reach the same rows. One shared header count would be wrong
+        # for every row but the first.
+        main(["run", str(EXAMPLE / "run-offline.yml"), "--out", str(tmp_path), "--yes"])
+        directory = next(p for p in tmp_path.iterdir() if p.is_dir())
+        metrics = json.loads((directory / "metrics.json").read_text())
+        rows = metrics["free_text_vs_humans"]["summary"]["defects"]
+        assert len({row["compared"] for row in rows}) > 1

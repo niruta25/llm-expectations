@@ -1,6 +1,6 @@
 [project]
 name = "llm-expectations"
-version = "0.0.0"
+version = "0.1.0"
 description = "Quality checks for LLM outputs that are judgements about a document, not values copied out of one"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -8,7 +8,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 keywords = ["llm", "evaluation", "llm-as-judge", "classification", "taxonomy", "data-quality"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -39,6 +39,7 @@ llm-expectations = "llm_expectations.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/niruta25/llm-expectations"
+Changelog = "https://github.com/niruta25/llm-expectations/blob/main/CHANGELOG.md"
 Design = "https://github.com/niruta25/llm-expectations/blob/main/DESIGN.md"
 
 [tool.setuptools.packages.find]

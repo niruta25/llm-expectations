@@ -12,13 +12,14 @@ triage, report — without spending anything.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from .base import JudgeError, JudgeReply, JudgeRequest
 
-__all__ = ["FakeProvider", "claims", "reply"]
+__all__ = ["FakeProvider", "ScriptedProvider", "claims", "reply"]
 
 
 def reply(
@@ -110,3 +111,58 @@ def _failing(_: JudgeRequest) -> str:
 
 
 FakeProvider.FAILS = staticmethod(_failing)  # type: ignore[attr-defined]
+
+
+@dataclass
+class ScriptedProvider:
+    """A judge that answers from a hash of the prompt, with no model behind it.
+
+    This is what ``provider: fake`` in ``judges.yml`` builds, and it exists so
+    the worked example runs with no API key and no cost. Everything upstream
+    of the judge — the free checks, the taxonomy health checks, the gates, the
+    report — is real on real data; only the verdicts are invented.
+
+    Deterministic on the prompt, so a run is reproducible and the cache
+    behaves exactly as it would with a real judge.
+
+    **A run that uses one is stopped by Gate 1**, loudly, because a report
+    full of scripted verdicts looks exactly like a report full of real ones.
+    That guard is the only reason this is safe to ship.
+    """
+
+    id: str = "fake"
+    model: str = "scripted"
+    approve_rate: float = 0.75
+    calls: list[JudgeRequest] = field(default_factory=list)
+
+    def complete(self, request: JudgeRequest) -> JudgeReply:
+        self.calls.append(request)
+        # Seeded with the judge id as well as the prompt, so a panel of
+        # scripted judges disagrees the way a real one would. Three fakes
+        # that answered identically would show an effective vote count of
+        # 1.0 and teach the wrong lesson about the panel.
+        digest = hashlib.blake2b(
+            f"{self.id}\x00{request.system}\x00{request.user}".encode(), digest_size=8
+        ).digest()
+        roll = int.from_bytes(digest[:4], "big") / 0xFFFFFFFF
+        confidence = round(0.55 + (int.from_bytes(digest[4:6], "big") / 0xFFFF) * 0.44, 2)
+
+        if CLAIM_MARKER in request.user:
+            written = request.user.split(CLAIM_MARKER, 1)[1].strip()
+            first = written.split(".")[0].strip() or written[:60]
+            text = (
+                claims(supported=[first])
+                if roll < self.approve_rate
+                else claims(supported=[], unsupported=[first])
+            )
+        elif roll < self.approve_rate:
+            text = reply(True, confidence, "scripted: no model was asked")
+        else:
+            text = reply(False, confidence, "scripted: no model was asked")
+
+        return JudgeReply(
+            text=text,
+            model=self.model,
+            input_tokens=len(request.system + request.user) // 4,
+            output_tokens=len(text) // 4,
+        )

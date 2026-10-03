@@ -1,7 +1,7 @@
 """llm-expectations — quality checks for LLM outputs that are judgements *about*
 a document, not values copied *out of* one.
 
-Pre-alpha. Both gates are in place, and human answers now grade both the
+Alpha. Both gates are in place, and human answers now grade both the
 model and the judges that score it.
 
 With labels: macro F1 beside the baseline it has to beat, a confusion matrix,
@@ -91,7 +91,7 @@ from .types import (
     Verdict,
 )
 
-__version__ = "0.0.0"
+__version__ = "0.1.0"
 
 __all__ = [
     "ABSTAIN",

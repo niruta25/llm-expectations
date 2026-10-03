@@ -9,8 +9,9 @@ guess whether a number is backed by human answers.
 from. A number without its bar is not a result, and a bar without its source
 is not arguable.
 
-**Names what the run cannot tell you.** That list is long at M2 and shrinks as
-milestones land. A report that hid it would read as a finished answer.
+**Names what the run cannot tell you.** Every number a guardrail withheld,
+every field with no human answers, every question the data cannot settle. A
+report that hid that list would read as a finished answer.
 """
 
 from __future__ import annotations
@@ -77,6 +78,7 @@ def render(
     panel: Mapping[str, Any],
     humans: Mapping[str, Any],
     free_text_gate: Mapping[str, Any],
+    free_text_vs_humans: Mapping[str, Any],
     stability: Mapping[str, Any],
     calibration: Mapping[str, Any],
     triage_eval: Mapping[str, Any],
@@ -99,6 +101,7 @@ def render(
     for name, spec in schema.fields.items():
         out += _field_section(name, spec, schema, taxonomies, findings, skipped)
         out += _vs_humans((humans.get("fields") or {}).get(name), name)
+        out += _defects(free_text_vs_humans.get(name))
     out += _judges_vs_humans(humans.get("judges") or [])
 
     out += _stability(stability)
@@ -641,6 +644,38 @@ def _annotators(humans: Mapping[str, Any] | None) -> list[str]:
     return lines
 
 
+def _defects(scored: Mapping[str, Any] | None) -> list[str]:
+    """Each defect box against the check that looks for it."""
+    if not scored or not scored.get("defects"):
+        return []
+    rows = scored["defects"]
+    # The denominator is per defect, not per field: each box is compared
+    # against a different check, and those checks do not all reach the same
+    # rows. One header count would be wrong for every row but the first.
+    lines = [
+        "  vs human defect ratings",
+        "",
+        f"    {'defect':<20}{'n':>5}{'agreement':>11}{'tool only':>11}{'human only':>12}",
+    ]
+    for row in rows:
+        lines.append(
+            f"    {row['defect']:<20}{row['compared']:>5}{_maybe(row['agreement']):>11}"
+            f"{row['tool_only']:>11}{row['human_only']:>12}"
+        )
+    weakest = min(rows, key=lambda r: r["agreement"] if r["agreement"] is not None else 1.0)
+    if weakest["agreement"] is not None and weakest["agreement"] < 0.7:
+        lines += _wrapped(
+            f"{weakest['defect']} is the weak one. That is the expected outcome rather "
+            "than a surprise — it is hard for the judge and hard for the person, and a "
+            "number that says so is worth more than one that hides it.",
+            indent=4,
+        )
+    for row in rows:
+        if row["leaning"]:
+            lines.append(f"    {row['check']} {row['leaning']} against people.")
+    return lines + [""]
+
+
 def _judges_vs_humans(judges: Sequence[Mapping[str, Any]]) -> list[str]:
     """Which way each judge fails, and whether it beats doing nothing."""
     if not judges:
@@ -900,7 +935,10 @@ def _cannot(cannot_tell: Sequence[str], *, subject: str = "RUN") -> list[str]:
     lines = [title + "─" * max(3, RULE + 2 - len(title)) + "┐"]
     for line in cannot_tell:
         head, _, tail = line.partition("\n")
-        lines.append(f"  │  ✗ {head}")
+        wrapped_head = _wrapped(head, indent=0, width=RULE - 8) or [head]
+        lines.append(f"  │  ✗ {wrapped_head[0]}")
+        for extra in wrapped_head[1:]:
+            lines.append(f"  │    {extra}")
         for extra in tail.splitlines():
             for wrapped in _wrapped(extra, indent=0, width=RULE - 8):
                 lines.append(f"  │      {wrapped}")

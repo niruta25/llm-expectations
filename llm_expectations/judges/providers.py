@@ -245,6 +245,12 @@ _PROVIDERS: Mapping[str, type] = {
 
 def build_provider(spec: JudgeSpec, *, client: httpx.Client | None = None) -> Provider:
     """Construct the transport for one configured judge."""
+    if spec.provider == "fake":
+        # No transport, no network, no retries to wrap: there is nothing
+        # transient about a hash.
+        from .fake import ScriptedProvider
+
+        return ScriptedProvider(id=spec.id)
     factory = _PROVIDERS.get(spec.provider)
     if factory is None:  # pragma: no cover — config validation rejects this first
         raise JudgeError(f"judge {spec.id!r} has unknown provider {spec.provider!r}")
