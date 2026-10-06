@@ -1,9 +1,9 @@
-# examples/ticket-routing — an **assigned** project
+# examples/ticket-routing — an assigned project
 
-> A support desk wants to stop routing tickets by hand. A model reads each
-> ticket and picks a queue and a severity. Before anyone turns that on, two
-> questions have to be answered: **is it good enough**, and **which tickets
-> still need a person**?
+A support desk wants to stop routing tickets by hand. A model reads each
+ticket and picks a queue and a severity. Before anyone turns that on, two
+questions have to be answered: is it good enough, and which tickets still
+need a person?
 
 This is the worked project for the **assigned** kind of field — an answer
 chosen from a versioned list of labels. It is the kind with the weakest free

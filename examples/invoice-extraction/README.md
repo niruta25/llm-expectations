@@ -1,9 +1,9 @@
-# examples/invoice-extraction — a **copied** project
+# examples/invoice-extraction — a copied project
 
-> Supplier invoices arrive as text. A model pulls out the invoice number, the
-> date and the amount due, and the accounts payable system pays them. Before
-> that runs without a person in the loop, somebody has to answer: **how often
-> is the amount wrong, and would we know?**
+Supplier invoices arrive as text. A model pulls out the invoice number, the
+date and the amount due, and the accounts payable system pays them. Before
+that runs without a person in the loop, somebody has to answer: how often is
+the amount wrong, and would we know?
 
 This is the worked project for the **copied** kind of field — a value that is
 supposed to be *in* the document. It is the only kind where a defect can be

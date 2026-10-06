@@ -1,10 +1,10 @@
-# examples/release-notes — a **free_text** project
+# examples/release-notes — a free_text project
 
-> Every merged pull request needs a one-line note a customer can read. A
-> model writes them from the commit and the diff. The release goes out on
-> Thursday, and nobody has time to read 260 lines — but a note that invents
-> a feature, a performance claim or a security fix is a line that ends up in
-> a customer's inbox.
+Every merged pull request needs a one-line note a customer can read. A model
+writes them from the commit and the diff. The release goes out on Thursday,
+and nobody has time to read 260 lines — but a note that invents a feature, a
+performance claim or a security fix is a line that ends up in a customer's
+inbox.
 
 This is the worked project for the **free_text** kind of field — a sentence
 written *about* the item. There is no single right release note, so there is
