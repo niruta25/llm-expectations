@@ -69,11 +69,39 @@ a thirteen-item corpus does not sample it either. The gate is predictive, not
 complete, and the audit is how the report measures that rather than asserting
 otherwise.
 
-## What lands here today
+## Run it yourself, with no API key
 
 ```bash
-llm-expectations run examples/jtbd/run.yml
+llm-expectations run examples/jtbd/run-offline.yml
 ```
+
+`run-offline.yml` wires the two judge jobs to `provider: fake`, which answers
+from a hash of the prompt. No network, no key, no cost. Everything upstream of
+the judge is real on real data, and Gate 1 stops the run to say the rest is
+not:
+
+```
+  ┌ GATES ─────────────────────────────────────────────────────────────┐
+  │  ✗ measurement is sound       STOP
+  │  ✗ judge beats baselines      STOP
+  └─────────────────────────────────────────────────────────────────────┘
+    ✗ judge-a, judge-b, judge-c are scripted judges — they answer from a
+      hash of the prompt and no model was asked. The free checks above are
+      real; every judge-backed number in this run is invented and must not
+      be read as a measurement.
+    ⚠ judge-b approves 88% of what it scores, outside the 15%–85% band.
+      Possible rubber stamp.
+    ⚠ 13 items, below the 200 needed for a distribution or drift claim.
+      Those numbers are reported with their intervals and cannot support a
+      conclusion.
+    ✗ only 5 errors in 13 labelled items (38.5%) — the floor is 30 and 5%.
+      Any ranking number off this is noise with a tight-looking interval
+      around it.
+```
+
+Use `run.yml` and your own keys when you want numbers that mean something.
+
+## What lands here today
 
 The free checks catch three plants on their own — `s-08` stopped at a parent,
 `s-09` is not a label at all, and `s-12`'s summary shares no vocabulary with

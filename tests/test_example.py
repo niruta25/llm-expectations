@@ -13,6 +13,7 @@ import yaml
 
 from llm_expectations.config import load_run
 from llm_expectations.read import index_items, read_labels, read_outputs
+from llm_expectations.schema import FieldKind
 from llm_expectations.types import ABSTAIN
 
 from .conftest import EXAMPLE
@@ -88,16 +89,38 @@ def test_the_abstention_is_recorded_as_correct_behaviour_not_as_a_plant(example)
     assert by_annotator[("s-13", "jtbd", "ann-2")] != ABSTAIN
 
 
-def test_every_non_abstaining_label_is_a_real_leaf_of_its_taxonomy(example):
+def test_every_assigned_label_is_a_real_leaf_of_its_taxonomy(example):
     # The human answers are the answer key. If one of them is not in the tree,
     # every metric computed against it is measuring the wrong thing.
     config = example["config"]
     for label in example["labels"]:
         if label.label == ABSTAIN:
             continue
+        if config.schema[label.field].kind is not FieldKind.ASSIGNED:
+            continue
         taxonomy = config.taxonomy_for(label.field)
         assert label.label in taxonomy, label
         assert taxonomy.is_leaf(label.label), label
+
+
+def test_free_text_labels_are_defect_names_not_taxonomy_labels(example):
+    """A free-text field has no right answer, so a person marks boxes.
+
+    There is no gold summary to compare against — two summaries can be equally
+    good and share almost no words — so mode 1 for free text means defect
+    ratings, and those are drawn from a fixed vocabulary rather than a tree.
+    """
+    from llm_expectations.metrics.classification import DEFECTS, RATED_CLEAN
+
+    permitted = set(DEFECTS) | {RATED_CLEAN}
+    marked = [
+        label
+        for label in example["labels"]
+        if example["config"].schema[label.field].kind is FieldKind.FREE_TEXT
+    ]
+    assert marked, "the example should carry defect ratings for its free-text field"
+    for label in marked:
+        assert label.label in permitted, label
 
 
 def test_the_fuzzy_pair_is_where_the_two_annotators_actually_disagree(example):

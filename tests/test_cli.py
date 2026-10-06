@@ -184,3 +184,64 @@ def test_triage_eval_on_an_unlabelled_run_says_why(tmp_path, monkeypatch, capsys
     capsys.readouterr()
     assert main(["triage-eval", str(directory)]) == 2
     assert "human labels" in capsys.readouterr().err
+
+
+class TestTheOfflineExample:
+    """The worked example must run for anyone, with no key and no cost."""
+
+    def test_it_runs_end_to_end_without_a_network(self, tmp_path, monkeypatch):
+        import llm_expectations.judges.providers as providers
+
+        def explode(*args, **kwargs):
+            raise AssertionError("a scripted judge reached for the network")
+
+        monkeypatch.setattr(providers.httpx, "Client", explode)
+        assert (
+            main(["run", str(EXAMPLE / "run-offline.yml"), "--out", str(tmp_path), "--yes"]) == 0
+        )
+
+    def test_it_costs_nothing_because_it_asks_nothing(self, tmp_path, capsys):
+        main(["run", str(EXAMPLE / "run-offline.yml"), "--out", str(tmp_path), "--yes"])
+        assert "$0.00" in capsys.readouterr().out
+
+    def test_gate_one_stops_the_run_and_says_the_verdicts_are_invented(
+        self, tmp_path, capsys
+    ):
+        # The only reason shipping a scripted judge is safe: a report built on
+        # one is laid out exactly like a report built on a real judge.
+        main(["run", str(EXAMPLE / "run-offline.yml"), "--out", str(tmp_path), "--yes"])
+        printed = capsys.readouterr().out
+        # Whitespace-normalised: the report wraps at eighty columns, so a
+        # phrase can straddle a line break.
+        flat = " ".join(printed.split())
+        assert "are scripted judges" in flat
+        assert "must not be read as a measurement" in flat
+        assert "measurement is sound STOP" in flat
+
+    def test_the_free_checks_are_still_real(self, tmp_path, capsys):
+        # Everything upstream of the judge runs on real data. The planted
+        # defects the free checks own are genuinely found.
+        main(["run", str(EXAMPLE / "run-offline.yml"), "--out", str(tmp_path), "--yes"])
+        printed = capsys.readouterr().out
+        for planted in ("s-08", "s-09", "s-11", "s-12", "s-13"):
+            assert planted in printed
+
+    def test_a_scripted_judge_suppresses_every_judge_backed_number(self, tmp_path):
+        import json
+
+        main(["run", str(EXAMPLE / "run-offline.yml"), "--out", str(tmp_path), "--yes"])
+        directory = next(p for p in tmp_path.iterdir() if p.is_dir())
+        metrics = json.loads((directory / "metrics.json").read_text())
+        withheld = {row["metric"] for row in metrics["suppressed"]}
+        assert {"panel.agreement", "triage.validated", "gate2.auc"} <= withheld
+
+    def test_a_panel_of_scripted_judges_still_disagrees(self, tmp_path):
+        import json
+
+        # Seeded by judge id, so three fakes do not answer identically. Three
+        # that agreed on everything would teach the wrong lesson about what a
+        # panel is worth.
+        main(["run", str(EXAMPLE / "run-offline.yml"), "--out", str(tmp_path), "--yes"])
+        directory = next(p for p in tmp_path.iterdir() if p.is_dir())
+        panel = json.loads((directory / "metrics.json").read_text())["panel"]
+        assert panel.get("splits", 0) > 0 or (panel.get("agreement") or 1.0) < 1.0

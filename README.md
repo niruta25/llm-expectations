@@ -27,10 +27,23 @@ against. This tool covers those two kinds of field — **assigned** labels and
 
 ## Status
 
-**Pre-alpha, and every build milestone is in.** Both gates, free checks on
-both kinds of field, a panel, human answers grading the model and its judges,
-a fitted calibration, the operating-point table a review budget needs, and
-runs set against each other.
+**Alpha — every milestone in the design is built.** Both gates, free checks
+on both kinds of field, a panel, human answers grading the model and its
+judges, a fitted calibration, the operating-point table a review budget needs,
+free text, and runs set against each other.
+
+### Try it without an API key
+
+```bash
+pip install -e .
+llm-expectations run examples/jtbd/run-offline.yml
+```
+
+`provider: fake` answers from a hash of the prompt — no network, no key, no
+cost. Everything upstream of the judge is real on real data, and Gate 1 stops
+the run to say the rest is not.
+
+### The commands
 
 ```bash
 llm-expectations check examples/jtbd/taxonomy.yml   # static health, no data
@@ -41,42 +54,36 @@ llm-expectations triage-eval out/<run>/             # the table alone, free
 llm-expectations compare out/a out/b                # two runs, head to head
 ```
 
-```
-  A  2026-10-02_0747_jtbd-p7              400 items   prompt p7
-  B  2026-10-02_0747_jtbd-p8              400 items   prompt p8
+### What it refuses to do
 
-  ⚠ the prompt changed, p7 → p8. That is what a comparison is for; it also
-    means every difference below has more than one possible cause.
+Most of the work here is in the absences.
 
-                                      A        B     change
-    macro F1                       0.71     0.89      +0.18
-    accuracy                      71.0%    89.2%    +18.2pp
+- A guardrail that fires **withholds the numbers it invalidates** and names
+  them, rather than printing them with a caveat nobody reads.
+- **Unscored never becomes a pass.** An unreadable judge reply is counted,
+  never defaulted — a coin-flip default is uncorrelated by construction and
+  would quietly move every agreement number in the run.
+- **No ranking is called validated** without labels and a target big enough to
+  rank on. A metric under its sample floor is printed with its interval and a
+  line saying it cannot support a conclusion: a wide interval is not a weak
+  result, it is no result.
+- **`compare` will not tell you which run is better.** It shows improved,
+  regressed and the usually much larger unchanged, and withholds the verdict —
+  most items tie in a real A/B, and a net delta without a test is how
+  underpowered changes get shipped.
+- **A calibration refuses to outlive its prompt version.** Two runs on
+  different taxonomy versions refuse to compare without a migration mapping.
+- **A judge never sees a human label.** The context a triage strategy receives
+  has no field for one, and an assertion confirms it at runtime.
 
-    items that moved          400 shared
-      improved                   107
-      regressed                   34
-      unchanged                  259
-
-  ┌ WHAT THIS COMPARISON CANNOT TELL YOU ──────────────────────────────────┐
-  │  ✗ whether jtbd actually got better or worse
-  │      A net +73 is not a result without a test over the items that
-  │      actually differ — most items tie in a real A/B, and quoting a win
-  │      rate without one is how underpowered changes get shipped.
-  └────────────────────────────────────────────────────────────────────────┘
-```
-
-**`compare` will not tell you which run is better**, and that refusal is the
-point. Two runs on different taxonomy versions refuse to compare at all
-without a migration mapping — lining labels up by name across a rename reads
-an edit you made as a distribution the model shifted.
-
-Every number carries what it has to beat. Calibration quality is measured out
-of fold. A calibration fitted against one prompt version refuses to be reused
-against another. A wide interval is reported as no result rather than hidden.
+Calibration quality is measured **out of fold**. Intervals resample whole
+items, never `(item, field)` pairs. Every number carries what it has to beat:
+accuracy next to the majority-label baseline, a ranking next to random and
+output length, a judge's accuracy next to approving everything.
 
 A worked project with eight deliberately planted defects lives in
-[`examples/jtbd/`][example]; at thirteen items it correctly *fails* Gate 2 and
-fits no calibration, which is what a fixture that size should do.
+[`examples/jtbd/`][example] — at thirteen items it correctly *fails* Gate 2
+and fits no calibration, which is what a fixture that size should do.
 
 [example]: https://github.com/niruta25/llm-expectations/tree/main/examples/jtbd
 
@@ -124,8 +131,12 @@ fits no calibration, which is what a fixture that size should do.
 | M5 | labels (Mode 1) | done |
 | M5b | calibration + triage evaluation | done — shippable |
 | M6 | free text | done — shippable |
-| M7 | across runs | **done** |
-| M8 | polish, docs, worked example | |
+| M7 | across runs | done |
+| M8 | polish, docs, worked example | **done** |
+
+What is deliberately *not* built is in [DESIGN.md §13][design] — copied
+fields, derived thresholds, the A/B significance test, multi-label, reasoning
+judges — each with a reason to wait and a seam already in place.
 
 ## License
 

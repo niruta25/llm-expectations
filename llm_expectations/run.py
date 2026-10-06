@@ -45,10 +45,12 @@ from .judges.providers import build_provider
 from .judges.screening import JudgeHealth, screen, unreadable_items
 from .metrics.agreement import annotator_agreement, effective_votes, fuzzy_pairs, leniency
 from .metrics.classification import (
+    DEFECTS,
     TreeBucket,
     bucket,
     classify,
     confusion_direction,
+    defect_agreement,
     judge_direction,
     primary_labels,
 )
@@ -506,6 +508,20 @@ def to_findings(
     return findings
 
 
+def assigned_fields(config: RunConfig) -> tuple[str, ...]:
+    """The fields a human answer can be a gold value for.
+
+    A free-text field carries defect ratings instead, and treating one as an
+    answer key compares a box name against a sentence — every row an error,
+    and nothing about it looks wrong.
+    """
+    return tuple(
+        name
+        for name, spec in config.schema.fields.items()
+        if spec.kind is FieldKind.ASSIGNED
+    )
+
+
 def scoring_context(
     config: RunConfig, dataset: Dataset, verdicts: Sequence[Verdict], calibrator: Calibrator
 ) -> TriageContext:
@@ -747,7 +763,7 @@ def against_humans(
     Labels reach this function and no earlier. Downstream of the judge they
     are used for exactly four things, and three of them are here: scoring the
     model, scoring the judge, and asking whether the taxonomy is crisp. The
-    fourth, fitting a calibration, arrives at M5b.
+    fourth is fitting a calibration.
     """
     out: dict[str, Any] = {}
     floor = int(config.settings.value("min_n_per_label"))
@@ -1018,7 +1034,7 @@ def triage_evaluation(
     triage = config.judges.triage
     if triage is None or not labels:
         return {}
-    target = build_target(labels, outputs, tuple(config.schema.fields))
+    target = build_target(labels, outputs, assigned_fields(config))
     if not target.truth or not target.positives:
         return {
             "skipped": (
@@ -1146,6 +1162,65 @@ def claim_findings(run_id: str, config: RunConfig, verdicts: Sequence[Verdict]) 
             )
         )
     return findings
+
+
+def _flagged_by_check(findings: Sequence[Finding], field: str) -> dict[str, dict[str, bool]]:
+    """Per check, whether it flagged each item of one field.
+
+    ``claims_missing`` is not a check of its own — it is the judge's answer to
+    "what did this leave out", which rides along on the claim verdict. It is
+    surfaced here so the human box for *missing something* has a counterpart
+    to be compared against, which is the whole point of asking.
+    """
+    wanted = set(DEFECTS.values())
+    out: dict[str, dict[str, bool]] = {}
+    for found in findings:
+        if found.field != field or not found.item_id:
+            continue
+        if found.status is Status.UNSCORED:
+            continue
+        if found.check in wanted:
+            out.setdefault(found.check, {})[found.item_id] = found.status is Status.FAIL
+        if found.check == "claims_supported":
+            out.setdefault("claims_missing", {})[found.item_id] = bool(
+                found.evidence.get("missing")
+            )
+    return out
+
+
+def free_text_against_humans(
+    config: RunConfig, dataset: Dataset, findings: Sequence[Finding]
+) -> dict[str, Any]:
+    """Judge-versus-human agreement on each defect box (DESIGN.md §8).
+
+    Humans are not asked to write a better summary; they are asked to mark
+    defects, and this is where those marks are compared against what the tool
+    said. The expected outcome is that *missing something* scores worst —
+    it is hard for the judge and for the human — and a number that says so is
+    worth more than one that hides it.
+    """
+    out: dict[str, Any] = {}
+    for name, spec in config.schema.fields.items():
+        if spec.kind is not FieldKind.FREE_TEXT:
+            continue
+        rows = defect_agreement(name, dataset.labels, _flagged_by_check(findings, name))
+        if not rows:
+            continue
+        out[name] = {
+            "defects": [
+                {
+                    "defect": row.defect,
+                    "check": row.check,
+                    "compared": row.compared,
+                    "agreement": row.agreement,
+                    "tool_only": row.tool_only,
+                    "human_only": row.human_only,
+                    "leaning": row.leaning,
+                }
+                for row in rows
+            ]
+        }
+    return out
 
 
 def free_gate_quality(
@@ -1300,7 +1375,8 @@ def what_this_run_cannot_tell_you(
         lines.append(
             f"whether {', '.join(free_text)} invented anything, or is filler\n"
             "cross-field agreement is the only check reading these fields today.\n"
-            "specificity, copy ratio, boilerplate and the claim judge arrive at M6"
+            "specificity, copy ratio and boilerplate read it too, and the claim "
+            "judge reads the rows they flag"
         )
     unlabelled = sorted(n for n, m in modes.items() if m is Mode.NO_LABELS)
     if unlabelled:
@@ -1528,6 +1604,8 @@ def _analyse(
         *label_findings,
         *claims,
     ]
+    # Reads the findings, so it has to come after they exist.
+    text_vs_humans = free_text_against_humans(config, dataset, findings)
     calibrator, calibration = fit_calibration(config, dataset, verdicts, modes)
     risk_rows, strategy_id = build_triage(config, dataset, verdicts, calibrator)
     scoring = scoring_context(config, dataset, verdicts, calibrator)
@@ -1596,6 +1674,7 @@ def _analyse(
         ],
         "panel": panel,
         "vs_humans": humans,
+        "free_text_vs_humans": text_vs_humans,
         "free_text_gate": gate_quality,
         "stability": stability_metrics,
         "calibration": calibration,
@@ -1651,6 +1730,7 @@ def _analyse(
         panel=panel,
         humans=humans,
         free_text_gate=gate_quality,
+        free_text_vs_humans=text_vs_humans,
         stability=stability_metrics,
         calibration=calibration,
         triage_eval=triage_eval,

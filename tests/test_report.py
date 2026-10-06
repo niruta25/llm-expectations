@@ -39,7 +39,9 @@ class TestAlwaysDoesThree:
         text = report().report
         head = text[: text.index("── jtbd")]
         assert "MODE" in head
-        assert "MODE 0" in head and "no labels" in head
+        # Every field of the worked example carries human answers of some
+        # kind, so each is at least mode 1 and the count is shown.
+        assert "MODE 1" in head and "labels" in head
 
     def test_the_gates_come_before_any_quality_number(self, report):
         text = report().report

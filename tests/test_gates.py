@@ -491,3 +491,48 @@ class TestOperatingPoint:
         assert "floor is 30" in table["skipped"]
         assert "strategies" not in table
         assert "OPERATING POINT" in result.report
+
+
+class TestTheTargetIsAssignedFieldsOnly:
+    """A defect rating is not a gold value to compare an output against."""
+
+    def test_free_text_defect_labels_do_not_become_errors(self):
+        from llm_expectations.gates import build_target
+        from llm_expectations.types import Label, Output
+
+        outputs = {
+            "s-1": Output("s-1", {"jtbd": "billing.card_declined", "summary": "a sentence"}),
+            "s-2": Output("s-2", {"jtbd": "billing.card_declined", "summary": "another"}),
+        }
+        labels = [
+            Label("s-1", "jtbd", "billing.card_declined", "ann-1"),
+            Label("s-2", "jtbd", "billing.card_declined", "ann-1"),
+            # Defect boxes, not answers. "none" never equals the summary text.
+            Label("s-1", "summary", "none", "ann-1"),
+            Label("s-2", "summary", "made_up", "ann-1"),
+        ]
+        target = build_target(labels, outputs, ("jtbd",))
+        assert target.positives == 0
+
+    def test_including_a_free_text_field_would_mark_everything_wrong(self):
+        # The shape of the bug this guards against: it looks fine and makes
+        # every ranking number meaningless.
+        from llm_expectations.gates import build_target
+        from llm_expectations.types import Label, Output
+
+        outputs = {"s-1": Output("s-1", {"jtbd": "billing.card_declined", "summary": "a"})}
+        labels = [
+            Label("s-1", "jtbd", "billing.card_declined", "ann-1"),
+            Label("s-1", "summary", "none", "ann-1"),
+        ]
+        assert build_target(labels, outputs, ("jtbd", "summary")).positives == 1
+        assert build_target(labels, outputs, ("jtbd",)).positives == 0
+
+    def test_the_example_target_counts_only_its_assigned_fields(self, example, provider,
+                                                                 tmp_path):
+        result = run(
+            example, out=tmp_path / "out", provider_factory=lambda spec: provider
+        )
+        gate = result.metrics["gates"]["beats_baselines"]
+        # Five planted errors across jtbd and outcome, not thirteen.
+        assert gate["target_errors"] < gate["target_items"]

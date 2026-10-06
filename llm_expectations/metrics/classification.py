@@ -33,7 +33,10 @@ from ..taxonomy import Taxonomy
 from ..types import ABSTAIN, Label, Output, Status, Verdict
 
 __all__ = [
+    "DEFECTS",
+    "RATED_CLEAN",
     "Classification",
+    "DefectAgreement",
     "ConfusionPair",
     "JudgeDirection",
     "LabelScore",
@@ -41,6 +44,7 @@ __all__ = [
     "bucket",
     "classify",
     "confusion_direction",
+    "defect_agreement",
     "judge_direction",
     "primary_labels",
 ]
@@ -425,3 +429,101 @@ def judge_direction(
     return [
         JudgeDirection(judge_id=judge_id, **tally) for judge_id, tally in sorted(tallies.items())
     ]
+
+
+#: The four boxes a human is asked to tick on a free-text output (DESIGN.md
+#: §8), and the check whose verdict each one is compared against.
+#:
+#: Humans are not asked to write a better summary — they are asked to mark
+#: defects, which takes about thirty seconds and lines up with what the
+#: library already looks for. ``none`` is a rated-clean row: without it,
+#: "no defects" and "not rated" would be the same thing on disk.
+DEFECTS: Mapping[str, str] = {
+    "made_up": "claims_supported",
+    "too_generic": "specificity",
+    "contradicts": "cross_field_agreement",
+    "missing": "claims_missing",
+}
+RATED_CLEAN = "none"
+
+
+@dataclass(frozen=True, slots=True)
+class DefectAgreement:
+    """How often the tool and a person marked the same box on the same row."""
+
+    defect: str
+    check: str
+    compared: int
+    agreed: int
+    tool_only: int
+    human_only: int
+
+    @property
+    def agreement(self) -> float | None:
+        return self.agreed / self.compared if self.compared else None
+
+    @property
+    def leaning(self) -> str | None:
+        """Which way the disagreement runs, when it runs one way.
+
+        A check that fires on rows people wave through is a different problem
+        from one that misses rows people flag, and the fix differs too.
+        """
+        if self.tool_only == self.human_only:
+            return None
+        return "over-flags" if self.tool_only > self.human_only else "under-flags"
+
+
+def defect_agreement(
+    field: str,
+    labels: Sequence[Label],
+    findings_by_check: Mapping[str, Mapping[str, bool]],
+) -> list[DefectAgreement]:
+    """Compare each human defect box against the check that looks for it.
+
+    ``findings_by_check`` maps a check id to whether it flagged each item, so
+    this reads results rather than recomputing them.
+
+    A row counts only when the human rated it at all. A defect nobody looked
+    for is not agreement, and treating unrated rows as clean would inflate
+    every number here as a corpus grew.
+    """
+    marked: dict[str, set[str]] = {}
+    rated: set[str] = set()
+    for label in labels:
+        if label.field != field:
+            continue
+        rated.add(label.item_id)
+        if label.label != RATED_CLEAN:
+            marked.setdefault(label.label, set()).add(label.item_id)
+
+    out = []
+    for defect, check in DEFECTS.items():
+        flagged = findings_by_check.get(check)
+        if flagged is None:
+            continue
+        shared = sorted(rated & set(flagged))
+        if not shared:
+            continue
+        humans = marked.get(defect, set())
+        agreed = tool_only = human_only = 0
+        for item_id in shared:
+            by_tool = flagged[item_id]
+            by_human = item_id in humans
+            if by_tool == by_human:
+                agreed += 1
+            elif by_tool:
+                tool_only += 1
+            else:
+                human_only += 1
+        out.append(
+            DefectAgreement(
+                defect=defect,
+                check=check,
+                compared=len(shared),
+                agreed=agreed,
+                tool_only=tool_only,
+                human_only=human_only,
+            )
+        )
+    return out

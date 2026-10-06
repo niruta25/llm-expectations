@@ -2,7 +2,7 @@
 
 AUC is secondary here, and deliberately. The question a review budget poses is
 "how many of the errors do I find in the first 500 rows I open", and that is
-Error Recall@Budget, which arrives at M5b. AUC summarises the whole ordering,
+Error Recall@Budget, in ``triage/evaluate.py``. AUC summarises the ordering,
 including the part nobody will ever review, and a model can win on it while
 losing at every budget you would actually use.
 

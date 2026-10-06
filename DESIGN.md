@@ -202,7 +202,7 @@ Every judge is compared to the dumb options on the same target.
 | Bootstrap resamples | 1,000 | |
 | Resample over | **items**, not (item, field) pairs | fields in one item move together; resampling them separately fakes independence |
 | Judge temperature | 0 | a measuring instrument should not roll dice |
-| Judge output budget | ~60 tokens | verdict + confidence + one sentence |
+| Judge output budget | ~60 tokens for a label, ~250 for a claim list | a verdict and a sentence fit in sixty; a list of claims does not |
 | Judge type | instruct | reasoning is opt-in, v1 |
 | Confidence intervals | on every ranking metric | a number without one is not a result |
 
@@ -381,6 +381,11 @@ Separate, not one big file. Because:
  "outcome": "resolved", "confidence": 0.82}
 ```
 
+`abstain` is reserved. An output of `"abstain"` or a JSON `null` both mean the
+model declined to pick a label, and a taxonomy that defines a label by that
+name is refused — it would make abstention and a real answer indistinguishable
+in every distribution.
+
 **taxonomy.yml**
 
 ```yaml
@@ -435,7 +440,13 @@ panel:
 triage:
   judge: judge-a
   scope: all                 # the triage judge ranks.
+  strategy: auto             # calibrated_risk if fitted, else raw_confidence
+  budgets: [0.01, 0.05, 0.10, 0.20]
 ```
+
+The triage block carries its ranking settings as well as its judge: `judges.yml`
+is where the two jobs are wired, and splitting the strategy into another file
+would mean editing two to change one thing.
 
 API keys are referenced by environment-variable **name**. The config file gets
 committed; the key never does.
@@ -514,7 +525,7 @@ read:
 
 ```json
 {"run_id": "2026-09-09_1432_jtbd-p8",
- "check": "expect_claims_supported",
+ "check": "claims_supported",
  "grain": "field",
  "item_id": "s-1042",
  "field": "summary",
@@ -544,7 +555,7 @@ Every judge call is its own row. Nothing is averaged away at write time.
 A panel finding shows the split and quotes the dissent:
 
 ```json
-{"check":"expect_label_correct_panel",
+{"check":"label_correct_panel",
  "item_id":"s-1042","field":"jtbd","status":"fail",
  "evidence":{
    "votes":{"judge-a":"correct","judge-b":"incorrect","judge-c":"correct"},
@@ -927,7 +938,8 @@ biggest label scores well and knows nothing.
      ASSIGNED LABEL: billing.payment_failed
 
      Reply with: correct (true/false/cannot_decide), confidence 0-1,
-     and one sentence of reasoning.
+     one sentence of reasoning, and — only when correct is false — the
+     label you would assign instead.
 ```
 
 Four things on purpose:
@@ -940,6 +952,10 @@ you see *why* judges split.
 
 **`cannot_decide` is allowed.** Forcing a verdict on an unclear item manufactures
 noise. It maps to unscored, never to "wrong".
+
+**A rejecting judge names its alternative.** Five extra output tokens, and it
+is what makes the fuzzy-pair detector real rather than inferred — see §9. It
+is also the first thing a reviewer opening the item wants to know.
 
 **Every panel judge gets the byte-identical prompt.** Otherwise panel
 disagreement measures your prompt differences instead of your judges.
@@ -1047,7 +1063,7 @@ eats the token budget. Those empties land on the hard items.
 | Panel sample | 300 items (configurable) |
 | Triage scope | all items |
 | Temperature | 0 |
-| Max output tokens | 60 |
+| Max output tokens | 60 (label) / 250 (claims) |
 | Approval-rate warning band | 15–85% |
 | Parse failure warning | 2% |
 | Retries | 3, with backoff |
@@ -1068,7 +1084,16 @@ So three separately named things:
 | Name | What it is |
 |---|---|
 | `raw_confidence` | What the judge said. A number in [0,1]. **Not a probability of anything.** |
-| `calibrated_error_probability` | P(this verdict is wrong), from a calibrator fitted on human-labelled data. Exists only in mode 1+. |
+| `calibrated_error_probability` | P(**the output** is wrong), from a calibrator fitted on human-labelled data. Exists only in mode 1+. |
+
+> **On the wording.** An earlier draft said "P(this verdict is wrong)". That
+> reading does not survive contact with the ranking: a judge that rejects a
+> label with confidence 0.9 is *sure*, so P(its verdict is wrong) is near
+> zero, and the item would sort last — putting the judge's clearest catches
+> at the bottom of the review queue. The number that orders a queue correctly
+> is the probability the **output** is wrong, and it is also what Error
+> Recall@Budget counts against. The verdict's direction is folded into the
+> input rather than reported as the answer.
 | `triage_score` | The ranking signal. Derived from one of the above, and always stamped with which. |
 
 ```
@@ -1239,6 +1264,24 @@ that rather than implying otherwise.
    output_length            1%        500       12     2.4%       2.4%
    random                   1%        500       10     2.0%       2.0%
 ```
+
+> **A correction to that table.** `calibrated_risk` cannot beat
+> `raw_confidence` the way it is shown, if the calibration is one curve over
+> the whole corpus. Platt scaling is **monotone**: it maps a higher raw score
+> to a higher probability, always, so it cannot reorder anything, and the two
+> rows would be identical at every budget.
+>
+> What a global calibration buys is real but different — probabilities that
+> mean what they say, so "the top 500 are each about 18% likely to be wrong"
+> becomes a sentence you can act on, and a review threshold can be set at a
+> target precision. It does not buy a better ordering.
+>
+> The ordering *can* improve when the calibration is fitted **per field**,
+> because "is this jtbd label right" and "is this outcome right" are
+> different tasks with different base rates, and a raw 0.7 on one is not a
+> raw 0.7 on the other. That is how it is implemented. When only one field
+> has enough labelled rows to fit, the report says the order is unchanged
+> rather than letting a reader infer a win that did not happen.
 
 `llm-expectations triage-eval out/<run>/` produces it, reading verdicts and
 labels off disk and issuing zero model calls.
@@ -1504,14 +1547,24 @@ bumps, and a month of results quietly stop being comparable.
 
 ```yaml
 # jtbd_v4_to_v5.yml
-billing.payment_failed:  billing.charge_failed     # renamed
-billing.card_declined:   billing.charge_failed     # merged into one
-access.password_reset:   access.password_reset     # unchanged
-billing.refund_request:  null                      # no equivalent
+from: jtbd@v4
+to:   jtbd@v5
+
+labels:
+  billing.payment_failed:  billing.charge_failed     # renamed
+  billing.card_declined:   billing.charge_failed     # merged into one
+  access.password_reset:   access.password_reset     # unchanged
+  billing.refund_request:  null                      # no equivalent
 ```
 
 With a mapping, old runs can be compared to new ones. Without one, the library
 refuses and says why.
+
+The file names its own endpoints so a mapping cannot be applied between the
+wrong pair of versions by accident — a comparison through the wrong mapping
+looks fine and means nothing. Labels mapping to `null` are excluded from the
+comparison **and counted**; dropping them silently is how a distribution shift
+gets manufactured.
 
 ### The fuzzy-pair detector
 
@@ -1528,6 +1581,24 @@ strength:
 
    →  71% of all disagreement sits on a single boundary.
 ```
+
+> **What makes the pair nameable.** A judge answering "is this label correct?"
+> yes or no never says what the right label *would* be, so a split tells you a
+> boundary is contested without telling you which boundary. Inferring the other
+> half from sibling structure would be a guess, and a guess is not a finding.
+>
+> So a judge that **rejects** a label is asked which one it would assign
+> instead — a few extra output tokens, and the suggestion is what a reviewer
+> opening the item wants anyway. A split whose dissenter named no alternative
+> is counted as unattributed rather than filled in, and a suggestion that is
+> not a label of *that field's* taxonomy is discarded: a judge naming something
+> from another taxonomy is a judge-health problem, and promoting it to a
+> boundary would send someone to rewrite two definitions over a pair that was
+> never real.
+>
+> Pairs at this tier are **undirected**. Counting `a ↔ b` apart from `b ↔ a`
+> would split the evidence for one boundary in half and bury it. Direction is
+> the next tier down, and needs labels.
 
 **With labels — from the confusion matrix, and the direction matters:**
 
@@ -1909,11 +1980,15 @@ llm-expectations/
     run.py            the orchestrator
     cache.py          verdict cache
     budget.py
+    gates.py          Gate 1 and Gate 2, and what they suppress
+    compare.py        two runs head to head
+    stability.py      the regenerate hook
 
     judges/
       base.py         Judge protocol, Verdict
-      providers.py    anthropic, openai, openai-compatible
+      providers.py    anthropic, openai, openai-compatible, fake
       prompts.py      prompt builders per task
+      fake.py         scripted judges — tests, and the offline example
       panel.py        voting, dissent, agreement, effective votes
       screening.py    approval rate, leniency, health table
 
@@ -1935,12 +2010,11 @@ llm-expectations/
       free_text.py
       item.py         cross-field consistency
       corpus.py       distribution, drift, boilerplate
-      guardrails.py   Gate 1
 
     metrics/
       classification.py   F1, confusion matrix, tree buckets
       ranking.py          AUC and the other secondary aggregates
-      agreement.py        agreement, effective votes, leniency
+      agreement.py        agreement, effective votes, leniency, annotators
       stats.py            bootstrap, intervals, baselines
 
     cli.py
@@ -1959,6 +2033,12 @@ signature; the schema decides which ones run.
 
 **`metrics/` never calls a model.** It reads findings and verdicts off disk.
 That is what makes `analyse` free.
+
+A fourth that emerged while building. **Both gates live in `gates.py`, above
+`checks/`, not inside it.** Gate 2 needs human labels and triage strategies;
+`checks/` is defined as free and label-blind, and importing either into it
+would quietly end that guarantee. The layering rule only holds if the thing
+that would break it is kept out.
 
 ### Build order
 
@@ -2006,6 +2086,8 @@ That is what makes `analyse` free.
        ~2 days
 ```
 
+All of the above is built. What follows in §13 is not.
+
 **Judge health goes into M1, not M4.** Approval rate and parse rate are about
 twenty lines each, and without them the first shippable version could be quietly
 ranking items with a rubber-stamp judge. That guardrail cannot wait.
@@ -2048,11 +2130,17 @@ Each pins a mistake that is easy to make and hard to see:
 2. A judge never receives a label — asserted at the type level
 3. A rubber-stamp judge is excluded from panel aggregates, but its verdicts are still written
 4. Unreadable replies are counted, never defaulted
-5. A metric below its sample floor is not reported at all
+5. A number a guardrail invalidated is withheld, not printed with a caveat —
+   and a number that is merely *underpowered* is printed, with its interval
+   and a line saying it cannot support a conclusion. Those are different
+   cases and §10 treats them differently: Tier 1 suppresses, Tier 2 reports
+   and flags.
 6. `analyse` makes zero model calls
 7. Editing a taxonomy without bumping the version is an error
 8. Item-grain pass rate is never higher than field-grain pass rate
 9. Two runs on different taxonomy versions refuse to compare
+10. A judge whose reply shape does not match the question asked is counted as
+    unreadable, not read as an answer to a different question
 
 ### Dependencies
 
@@ -2104,6 +2192,13 @@ version derives it from labelled data at a target precision:
 
 **Why later:** it needs Mode 1 data. The `threshold_from` field is already on
 every finding, so it slots in.
+
+### Reasoning about which of two runs is better
+
+`compare` lines two runs up, names the labels that moved and counts the items
+that improved or regressed. It stops there deliberately — see the A/B entry
+below — and the report says so in a box rather than leaving the reader to
+infer a verdict from a net delta.
 
 ### A/B between two prompt versions, with significance
 

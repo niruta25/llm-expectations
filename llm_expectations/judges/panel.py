@@ -8,8 +8,8 @@ Three things it deliberately does not do, and each absence is load-bearing:
 
 **It does not route disagreements to review.** Disagreement does not rank
 errors; published results put it near chance and below any single judge. It
-ships as a scored baseline at M4 so your own corpus settles it, and until then
-nothing here feeds triage.
+ships as a *scored baseline* instead, so your own corpus settles it — measured
+by Gate 2 and used by nothing. Selecting it stays a deliberate act.
 
 **It does not auto-approve on unanimity.** Judges agree constantly and are
 wrong on a lot of what they agree about. Consensus is not proof.

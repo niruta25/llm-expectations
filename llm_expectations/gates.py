@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .config import RunConfig
+from .config import FAKE_PROVIDER, RunConfig
 from .metrics.ranking import RankingTarget, auc, degenerate_target
 from .metrics.stats import Estimate
 from .triage.base import TriageContext
@@ -125,14 +125,45 @@ def gate_one(
 ) -> Gate:
     """Can the measurement be trusted? Always on, and free.
 
-    Most of this gate was already enforced where it is cheapest to enforce —
-    judge approval rates and parse rates at M1, effective votes at M3. This
-    assembles those into one verdict and adds the two that need the corpus:
-    whether there are enough rows to say anything, and whether the triage
-    signal could have seen a label.
+    Most of this gate is enforced where it is cheapest to enforce — judge
+    approval and parse rates as the verdicts arrive, effective votes as the
+    panel is counted. This assembles those into one verdict and adds what
+    needs the whole corpus: whether there are enough rows to say anything,
+    and whether the triage signal could have seen a label.
     """
     settings = config.settings
     results: list[GateResult] = []
+
+    scripted = sorted(
+        judge_id
+        for judge_id, spec in config.judges.judges.items()
+        if spec.provider == FAKE_PROVIDER
+    )
+    if scripted:
+        # The loudest thing this gate says. A report built on scripted
+        # verdicts is laid out exactly like a report built on real ones, and
+        # every judge-backed number in it is invented. Nothing downstream can
+        # tell the difference, so the gate has to.
+        results.append(
+            GateResult(
+                id="scripted_judge",
+                severity=Severity.STOP,
+                message=(
+                    f"{', '.join(scripted)} "
+                    + ("is a scripted judge" if len(scripted) == 1 else "are scripted judges")
+                    + " — they answer from a hash of the prompt and no model was asked. "
+                    "The free checks above are real; every judge-backed number in this run "
+                    "is invented and must not be read as a measurement."
+                ),
+                suppresses=(
+                    "judge.approval_rate",
+                    "panel.agreement",
+                    "panel.effective_votes",
+                    "triage.validated",
+                    "gate2.auc",
+                ),
+            )
+        )
 
     for row in judge_health:
         for severity, message in getattr(row, "flags", ()):
@@ -207,6 +238,11 @@ def build_target(
     Only the first annotator's answers are used. Pooling two annotators who
     disagree would silently make the target depend on which of them was read
     last; adjudicating them is a different job and mode 2's business.
+
+    ``fields`` must name **assigned** fields only. A free-text field's labels
+    are defect ratings, not a gold value — comparing "made_up" against the
+    summary text would mark every row an error and quietly make this target
+    useless while looking fine.
     """
     primary: dict[tuple[str, str], str] = {}
     for label in sorted(labels, key=lambda label: label.annotator):
@@ -348,7 +384,10 @@ def gate_two(
     has not been shown to beat anything.
     """
     settings = config.settings
-    target = build_target(labels, outputs, tuple(config.schema.fields))
+    assigned = tuple(
+        name for name, spec in config.schema.fields.items() if spec.kind.value == "assigned"
+    )
+    target = build_target(labels, outputs, assigned)
 
     if not target.truth:
         return GateTwo(

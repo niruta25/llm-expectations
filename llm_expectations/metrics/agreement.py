@@ -185,7 +185,8 @@ def leniency(verdicts: Sequence[Verdict], members: Sequence[str]) -> list[Lenien
 
     Free, and it needs no human labels: it says nothing about who is *right*,
     only who is softer. The absolute version — how often a judge waves through
-    a wrong label versus rejects a right one — needs labels and arrives at M5.
+    a wrong label versus rejects a right one — needs labels, and is
+    ``judge_direction`` in ``classification.py``.
     """
     counts: Counter[tuple[str, str]] = Counter()
     for decisions in _decisions(verdicts, members).values():
@@ -270,7 +271,7 @@ def fuzzy_pairs(
     split the evidence for it in half and bury it. Direction is a separate
     question — whether the confusion is symmetric (fix the taxonomy) or
     one-way (fix the prompt) — and answering it needs human labels, so it
-    arrives with the confusion matrix at M5.
+    comes from the confusion matrix, which needs them.
     """
     rows = _decisions(verdicts, members)
     by_key: dict[tuple[str, str], list[Verdict]] = {}

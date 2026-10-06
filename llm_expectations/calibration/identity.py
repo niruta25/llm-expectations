@@ -46,7 +46,7 @@ class IdentityCalibrator:
             notes=(
                 "the identity calibrator fits nothing — it passes raw confidence through, "
                 "and raw confidence is not a probability of error",
-                "a fitted calibrator (platt) needs ~100 labelled rows and arrives at M5b",
+                "a fitted calibrator (platt) needs ~100 labelled rows for the field",
             ),
         )
 

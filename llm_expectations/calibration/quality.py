@@ -4,12 +4,11 @@ A judge reporting "confidence 0.9" is stating a feeling. Whether that feeling
 tracks anything is a measurable question, and this is where it is measured —
 against human answers, downstream of every judge call.
 
-These functions land at M5 because that is where the first labelled answers
-arrive and §5 asks for the diagnostic. M5b reuses them unchanged for the
-``FitReport`` of a fitted calibrator: the question "do these stated
-probabilities match observed rates" is the same whether the numbers came out
-of a model's mouth or out of a logistic fit. Writing it twice would let the
-two answers drift.
+The same functions answer the question twice over: for a judge's raw stated
+confidence, and for the ``FitReport`` of a fitted calibrator. "Do these stated
+probabilities match observed rates" is one question whether the numbers came
+out of a model's mouth or out of a logistic fit, and writing it twice would
+let the two answers drift.
 """
 
 from __future__ import annotations

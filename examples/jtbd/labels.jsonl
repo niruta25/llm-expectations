@@ -28,3 +28,16 @@
 {"item_id": "s-07", "field": "jtbd", "label": "billing.payment_failed", "annotator": "ann-2"}
 {"item_id": "s-10", "field": "jtbd", "label": "billing.payment_failed", "annotator": "ann-2"}
 {"item_id": "s-13", "field": "jtbd", "label": "access.password_reset", "annotator": "ann-2"}
+{"item_id": "s-01", "field": "summary", "label": "none", "annotator": "ann-1"}
+{"item_id": "s-02", "field": "summary", "label": "none", "annotator": "ann-1"}
+{"item_id": "s-03", "field": "summary", "label": "none", "annotator": "ann-1"}
+{"item_id": "s-04", "field": "summary", "label": "none", "annotator": "ann-1"}
+{"item_id": "s-05", "field": "summary", "label": "none", "annotator": "ann-1"}
+{"item_id": "s-06", "field": "summary", "label": "none", "annotator": "ann-1"}
+{"item_id": "s-07", "field": "summary", "label": "none", "annotator": "ann-1"}
+{"item_id": "s-10", "field": "summary", "label": "made_up", "annotator": "ann-1"}
+{"item_id": "s-11", "field": "summary", "label": "too_generic", "annotator": "ann-1"}
+{"item_id": "s-12", "field": "summary", "label": "contradicts", "annotator": "ann-1"}
+{"item_id": "s-13", "field": "summary", "label": "missing", "annotator": "ann-1"}
+{"item_id": "s-08", "field": "summary", "label": "missing", "annotator": "ann-1"}
+{"item_id": "s-09", "field": "summary", "label": "none", "annotator": "ann-1"}
