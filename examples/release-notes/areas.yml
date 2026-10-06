@@ -1,0 +1,78 @@
+# Which part of the product a release note is about. Flat — six areas, no
+# hierarchy.
+#
+# The definitions carry the component names on purpose. `note` declares
+# `must_agree_with: [area]`, and that check asks whether the sentence draws
+# on the vocabulary of the area it was tagged with. A definition written as
+# "things to do with importing" would give the check nothing to match, and it
+# would pass everything.
+
+id: areas
+version: 1
+
+labels:
+  importer:
+    definition: >-
+      Getting records in from a file: the CSV reader, the column mapper, the
+      row validator, the staging queue, the duplicate detector, the encoding
+      sniffer.
+    examples:
+      - "a large CSV upload stops partway"
+      - "a repeated column header breaks the mapping"
+    not_this:
+      - "records arriving over the API rather than in a file → api"
+
+  reports:
+    definition: >-
+      What we show about records once they are in: the usage report, the
+      revenue chart, the export scheduler, the pivot builder, the date-range
+      picker, the saved view.
+    examples:
+      - "a chart disagrees with the console"
+      - "a scheduled export stops arriving"
+    not_this:
+      - "the figures are about money owed → billing"
+
+  billing:
+    definition: >-
+      Money owed and money charged: the proration engine, the invoice
+      renderer, the dunning job, the tax resolver, the credit note flow, the
+      seat counter.
+    examples:
+      - "a plan change prorates the wrong way"
+      - "an invoice omits the tax line"
+    not_this:
+      - "a report about revenue that charges nobody → reports"
+
+  api:
+    definition: >-
+      Machine-to-machine traffic: the records endpoint, the rate limiter, the
+      pagination cursor, the webhook signer, the token exchange, the bulk
+      writer.
+    examples:
+      - "paging backwards drops the cursor"
+      - "a webhook is delivered twice"
+    not_this:
+      - "a person uploading a file by hand → importer"
+
+  mobile:
+    definition: >-
+      The phone and tablet apps: the offline cache, push registration, the
+      photo uploader, the sync indicator, the deep link handler, session
+      restore.
+    examples:
+      - "unsent changes are lost when the app is backgrounded"
+      - "a push notification never registers"
+    not_this:
+      - "the same screen in a desktop browser → reports or admin"
+
+  admin:
+    definition: >-
+      Who may do what, and the record of what they did: the role editor, the
+      audit log, the invite flow, SSO settings, the retention policy, bulk
+      deactivate.
+    examples:
+      - "a nested group is granted the wrong role"
+      - "an action is missing from the audit log"
+    not_this:
+      - "signing in is failing for everyone → this is a support matter, not a release note"

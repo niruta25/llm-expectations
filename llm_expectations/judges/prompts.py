@@ -34,15 +34,19 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from ..schema import FieldKind, FieldSpec
 from ..taxonomy import Taxonomy
 from ..types import ABSTAIN, Item, Output, Status
-from .base import JudgeRequest, ParsedReply, ReplyOutcome
+from .base import JudgeRequest, JudgeTask, ParsedReply, ReplyOutcome
 
 __all__ = [
     "CLAIM_TOKENS",
+    "GATED_KINDS",
+    "JUDGEABLE",
     "ClaimSupportTask",
     "GroundednessTask",
     "LabelCorrectTask",
@@ -407,3 +411,30 @@ def copied_is_judgeable(output: Output, field: str) -> bool:
     """Is there a value here for a judge to ground?"""
     value = output.get(field)
     return value is not None and str(value).strip() != ""
+
+
+#: The kinds whose free checks are predictive enough to decide what gets paid
+#: for, and how to ask a judge about one. A fourth kind of field is a row
+#: here, not an edit to the collector or to the cost estimate — which is what
+#: the seam in DESIGN.md §4 is supposed to buy.
+#:
+#: ``assigned`` is deliberately absent. Its free checks catch format problems
+#: only, so a well-formed wrong label passes every one of them and the triage
+#: judge has to see everything.
+#:
+#: It lives beside the tasks rather than beside the collector so that
+#: ``plan`` and ``run`` build the same request from the same table. A plan
+#: that guessed at the task would be costing a call nobody is going to make.
+GATED_KINDS: Mapping[FieldKind, Callable[[FieldSpec, int], JudgeTask]] = {
+    FieldKind.FREE_TEXT: lambda spec, max_tokens: ClaimSupportTask(
+        style=spec.style.value if spec.style else "descriptive",
+        max_tokens=max(max_tokens, CLAIM_TOKENS),
+    ),
+    FieldKind.COPIED: lambda spec, max_tokens: GroundednessTask(),
+}
+
+#: Whether a row of that kind holds anything a judge could be asked about.
+JUDGEABLE: Mapping[FieldKind, Callable[[Output, str], bool]] = {
+    FieldKind.FREE_TEXT: free_text_is_judgeable,
+    FieldKind.COPIED: copied_is_judgeable,
+}

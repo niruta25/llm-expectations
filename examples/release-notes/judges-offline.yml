@@ -1,0 +1,28 @@
+# The same two jobs, wired to a scripted judge instead of a model.
+#
+# `provider: fake` answers from a hash of the prompt. No network, no key, no
+# cost:
+#
+#   llm-expectations run examples/release-notes/run-offline.yml
+#
+# Every free check is real on real data — length, specificity, copy ratio,
+# cross-field agreement, boilerplate, and the gate's own arithmetic. Only the
+# claim verdicts are invented, and Gate 1 stops the run and says so.
+
+judges:
+  - id: judge-a
+    provider: fake
+  - id: judge-b
+    provider: fake
+  - id: judge-c
+    provider: fake
+
+panel:
+  members: [judge-a, judge-b, judge-c]
+  sample: 130
+
+triage:
+  judge: judge-a
+  scope: all
+  strategy: auto
+  budgets: [0.01, 0.05, 0.10, 0.20]

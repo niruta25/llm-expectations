@@ -1,0 +1,29 @@
+# One free-text field and the assigned field it has to agree with.
+#
+# `note` is the one under test. `area` is here because a sentence and a label
+# that disagree is a defect you can find for nothing, and because it is the
+# cheapest useful second opinion there is: the check fires without knowing
+# which of the two is wrong, which is the finding rather than a weakness of it.
+item: pull_request
+
+fields:
+  area:
+    kind: assigned
+    taxonomy: areas@v1
+    allow_abstain: false        # every merged pull request belongs somewhere
+
+  note:
+    kind: free_text
+    style: descriptive          # it describes the item, so it splits into claims
+    min_words: 8                # under this it is a title, not a note
+    max_words: 35               # over this it is a changelog entry, not a line
+    must_agree_with: [area]
+    # Two thresholds moved off their defaults, and both are judgement calls
+    # about this corpus rather than improvements on the library's.
+    #
+    # A release note quotes component names, so some verbatim overlap with
+    # the pull request is correct rather than lazy. 0.5 flagged honest notes.
+    max_copy_ratio: 0.6
+    # A note that invents something reaches a customer, so the bar for the
+    # claim judge is higher here than the default.
+    min_claim_support: 0.98

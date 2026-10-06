@@ -37,6 +37,8 @@ __all__ = [
     "normalise",
     "parse_date",
     "parse_number",
+    "readable",
+    "same_value",
     "value_in_source",
     "value_shape",
 ]
@@ -140,18 +142,52 @@ def _found(value: str, item_text: str, spec_type: ValueType, verbatim: bool) -> 
         return value.strip() in item_text
 
     if spec_type is ValueType.NUMBER:
-        wanted = parse_number(value)
-        if wanted is None:
+        if parse_number(value) is None:
             return None
-        return any(parse_number(c) == wanted for c in candidates(item_text, spec_type))
+        return any(same_value(c, value, spec_type) for c in candidates(item_text, spec_type))
 
     if spec_type is ValueType.DATE:
-        wanted_date = parse_date(value)
-        if wanted_date is None:
+        if parse_date(value) is None:
             return None
-        return any(parse_date(c) == wanted_date for c in candidates(item_text, spec_type))
+        return any(same_value(c, value, spec_type) for c in candidates(item_text, spec_type))
 
     return normalise(value) in normalise(item_text)
+
+
+def readable(value: str, value_type: ValueType) -> bool:
+    """Can this be read as the type the field declares it to be?
+
+    Separate from :func:`same_value` because "I cannot read this" and "this
+    is a different value" are different answers, and a check that returned
+    the second for the first would charge the model twice for one defect.
+    """
+    if value_type is ValueType.NUMBER:
+        return parse_number(value) is not None
+    if value_type is ValueType.DATE:
+        return parse_date(value) is not None
+    return bool(str(value).strip())
+
+
+def same_value(
+    got: str, wanted: str, value_type: ValueType, *, verbatim: bool = False
+) -> bool:
+    """Are these two the same value? One definition, used in both places.
+
+    The free check asks whether a value is in the document and the scoring
+    asks whether it matches the human answer, and both have to mean the same
+    thing by "the same". If they drifted apart, a model that tidied every
+    amount it copied would come out grounded and wrong at once — which is
+    not a finding, it is two checks disagreeing about arithmetic.
+    """
+    if verbatim:
+        return got.strip() == wanted.strip()
+    if value_type is ValueType.NUMBER:
+        left, right = parse_number(got), parse_number(wanted)
+        return left is not None and left == right
+    if value_type is ValueType.DATE:
+        left_date, right_date = parse_date(got), parse_date(wanted)
+        return left_date is not None and left_date == right_date
+    return normalise(got) == normalise(wanted)
 
 
 def _has_value(output: object, field: str) -> bool:

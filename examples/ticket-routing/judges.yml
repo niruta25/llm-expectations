@@ -1,0 +1,44 @@
+# Two jobs, wired separately.
+#
+# The panel measures: three models over a sample, which gives an agreement
+# number, an estimate of how good the routing is, and — more useful — which
+# pairs of queues the judges cannot separate either.
+#
+# Triage ranks: one judge over all 320, producing the order a human should
+# work down. Panel disagreement is deliberately *not* the routing signal; it
+# ships as a scored baseline and the comparison table settles it on this data.
+
+judges:
+  - id: judge-a
+    provider: anthropic
+    model: claude-sonnet-5
+    api_key_env: ANTHROPIC_API_KEY     # the NAME of the variable, never the key
+    temperature: 0
+    max_tokens: 60
+
+  - id: judge-b
+    provider: anthropic
+    model: claude-opus-5
+    api_key_env: ANTHROPIC_API_KEY
+
+  # A cheaper third opinion. A panel of three near-identical models agrees
+  # with itself for reasons that have nothing to do with being right, so the
+  # members are deliberately not all the same size.
+  - id: judge-c
+    provider: anthropic
+    model: claude-haiku-4-5
+    api_key_env: ANTHROPIC_API_KEY
+
+  # Every model named here must be in the price table for `plan` to quote a
+  # figure. One that is not makes the whole estimate unavailable rather than
+  # approximate — see examples/jtbd, which has one on purpose.
+
+panel:
+  members: [judge-a, judge-b, judge-c]
+  sample: 150                          # 150 tickets x 2 fields x 3 judges
+
+triage:
+  judge: judge-a
+  scope: all
+  strategy: auto                       # calibrated_risk once a curve is fitted
+  budgets: [0.01, 0.05, 0.10, 0.20]

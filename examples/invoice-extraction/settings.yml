@@ -1,0 +1,8 @@
+# Everything here has a default. One is moved.
+
+# Share of unflagged rows judged anyway, so the gate's own miss rate is
+# measured instead of assumed. For a copied field the gate already sends
+# every ambiguous row to the judge, so the unflagged, unambiguous remainder
+# is small and genuinely low-risk — but "genuinely" is a claim, and the
+# audit is what turns it into a number.
+free_text_audit_rate: 0.10

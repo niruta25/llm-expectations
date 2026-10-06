@@ -814,7 +814,7 @@ def _free_text_gate(gate: Mapping[str, Any]) -> list[str]:
         lines.append(f"      {', '.join(parts)}")
     if gate.get("precision") is not None:
         lines.append(
-            f"    of the flagged rows        {gate['precision']:.0%} had an unsupported claim"
+            f"    of the flagged rows        {gate['precision']:.0%} were wrong"
         )
     if gate.get("saved_nothing"):
         lines += _wrapped(str(gate["saved_nothing"]), indent=4)

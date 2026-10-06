@@ -1,0 +1,26 @@
+# How urgent, in three words. Flat on purpose.
+#
+# Three values, no hierarchy. That matters for how a mistake is scored: with
+# no parents there is no branch to have partly got right, so every wrong
+# answer lands in "wrong" rather than "right parent". A shared *absence* of a
+# parent is not partial credit.
+
+id: severity
+version: 1
+
+labels:
+  blocker:
+    definition: "The customer cannot do the thing they pay us for, right now."
+    examples: ["every user is locked out", "the account has gone read-only"]
+    not_this:
+      - "slow, failing sometimes, or wrong but usable → degraded"
+  degraded:
+    definition: "It works, but wrongly, slowly, or not for everyone."
+    examples: ["new starters cannot sign in, existing users can", "a nightly job failed once"]
+    not_this:
+      - "nothing is broken and they want to know something → question"
+  question:
+    definition: "Nothing is broken; the customer wants information or an action taken."
+    examples: ["asking for a reissued invoice", "asking what a figure includes"]
+    not_this:
+      - "they are asking because something stopped working → degraded"

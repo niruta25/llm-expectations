@@ -1,0 +1,22 @@
+# The same project wired to a scripted judge, so it runs with no API key
+# and no cost. See judges-offline.yml for what that means and does not mean.
+#
+#   llm-expectations run examples/ticket-routing/run-offline.yml
+#
+run_id: routing-v2               # a timestamp is added automatically
+
+items:    items.jsonl
+outputs:  outputs.jsonl
+labels:   labels.jsonl
+schema:   schema.yml
+taxonomy: [queues.yml, severity.yml]
+judges:   judges-offline.yml
+settings: settings.yml
+
+produced_by:
+  model: claude-sonnet-5
+  prompt_version: router-v2
+
+budget:
+  max_usd: 12.00
+  confirm: true

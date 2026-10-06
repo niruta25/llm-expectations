@@ -1,0 +1,20 @@
+# Two assigned fields and nothing else. Every answer is a label chosen from a
+# versioned list, which is the kind with the weakest free checks and the
+# strongest need for a judge: a well-formed wrong label passes every check
+# that costs nothing.
+item: support_ticket
+
+fields:
+  queue:
+    kind: assigned
+    taxonomy: queues@v2
+    require_leaf: true          # routing to a team, not to a department
+    allow_abstain: true         # "I do not know" beats a guess the desk acts on
+
+  severity:
+    kind: assigned
+    taxonomy: severity@v1
+    allow_abstain: false        # every ticket gets a severity, including a guess
+    # The field block beats settings.yml, which beats the default. With three
+    # values a 25% ceiling would fire on a perfectly healthy distribution.
+    max_label_share: 0.5

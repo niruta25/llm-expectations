@@ -1,0 +1,22 @@
+# The same project wired to a scripted judge, so it runs with no API key and
+# no cost. See judges-offline.yml for what that means and does not mean.
+#
+#   llm-expectations run examples/release-notes/run-offline.yml
+#
+run_id: notes-v4                 # a timestamp is added automatically
+
+items:    items.jsonl
+outputs:  outputs.jsonl
+labels:   labels.jsonl
+schema:   schema.yml
+taxonomy: areas.yml
+judges:   judges-offline.yml
+settings: settings.yml
+
+produced_by:
+  model: claude-sonnet-5
+  prompt_version: notes-v4
+
+budget:
+  max_usd: 8.00
+  confirm: true

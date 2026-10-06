@@ -22,21 +22,22 @@ searching the text. But most interesting LLM output is *about* the document:
 ```
 
 None of that appears in the source text, so there is nothing to reconcile
-against. This tool covers those two kinds of field — **assigned** labels and
-**free text** — without pretending to certainty it has not earned.
+against. This tool covers all three kinds of field — **assigned** labels,
+**free text**, and values **copied** out of the document — without pretending
+to certainty it has not earned.
 
 ## Status
 
-**Alpha — every milestone in the design is built.** Both gates, free checks
-on all three kinds of field, a panel, human answers grading the model and its
-judges, a fitted calibration, the operating-point table a review budget needs,
-free text, and runs set against each other.
+**Alpha — every milestone in the design is built, and all three kinds of
+field with it.** Both gates, a panel, human answers grading the model and its
+judges, a fitted calibration, the operating-point table a review budget
+needs, and runs set against each other.
 
 ### Try it without an API key
 
 ```bash
 pip install -e .
-llm-expectations run examples/jtbd/run-offline.yml
+llm-expectations run examples/ticket-routing/run-offline.yml
 ```
 
 `provider: fake` answers from a hash of the prompt — no network, no key, no
@@ -46,12 +47,12 @@ the run to say the rest is not.
 ### The commands
 
 ```bash
-llm-expectations check examples/jtbd/taxonomy.yml   # static health, no data
-llm-expectations plan  examples/jtbd/run.yml        # what it will cost, no calls
-llm-expectations run   examples/jtbd/run.yml        # collect and analyse
-llm-expectations analyse out/<run>/                 # re-analyse from cache, free
-llm-expectations triage-eval out/<run>/             # the table alone, free
-llm-expectations compare out/a out/b                # two runs, head to head
+llm-expectations check examples/ticket-routing/queues.yml  # static health, no data
+llm-expectations plan  examples/ticket-routing/run.yml     # what it will cost, no calls
+llm-expectations run   examples/ticket-routing/run.yml     # collect and analyse
+llm-expectations analyse out/<run>/                        # re-analyse from cache, free
+llm-expectations triage-eval out/<run>/                    # the table alone, free
+llm-expectations compare out/a out/b                       # two runs, head to head
 ```
 
 ### What it refuses to do
@@ -81,10 +82,37 @@ items, never `(item, field)` pairs. Every number carries what it has to beat:
 accuracy next to the majority-label baseline, a ranking next to random and
 output length, a judge's accuracy next to approving everything.
 
-A worked project with eight deliberately planted defects lives in
-[`examples/jtbd/`][example] — at thirteen items it correctly *fails* Gate 2
-and fits no calibration, which is what a fixture that size should do.
+## Worked projects, one per kind of field
 
+Each ships its data, its config, and the deterministic script that built the
+corpus. All of them run offline with no API key.
+
+| | kind | the question it answers |
+|---|---|---|
+| [**ticket-routing**][routing] | `assigned` | 320 support tickets into nine queues. Can we auto-route, and which tickets still need a person? |
+| [**release-notes**][notes] | `free_text` | 260 merged pull requests into one customer-facing line each. Did any of them invent a feature? |
+| [**invoice-extraction**][invoices] | `copied` | 300 supplier invoices. How often is the amount wrong, and would we know? |
+
+Three findings they are built to show, one each:
+
+- **The taxonomy, not the model.** Two annotators disagree with each other on
+  one pair of queues 86% of the time. No prompt fixes that.
+- **Free text is cheaper than assigned.** Its free checks catch *content*
+  problems, so they can decide what gets paid for — 70% off the judge bill,
+  with an audit sample measuring what the gate misses.
+- **Present is not correct.** 96% of invoice totals are in the document and
+  89.5% are the right one. Two thirds of the wrong ones pass every free
+  check, because the carriage charge is in the document too.
+
+[`examples/jtbd/`][example] is the fixture rather than a project: thirteen
+items, eight planted defects, and a manifest naming the check that must catch
+each. It correctly *fails* Gate 2 and fits no calibration, which is what a
+fixture that size should do. [All four][examples].
+
+[examples]: https://github.com/niruta25/llm-expectations/tree/main/examples
+[routing]: https://github.com/niruta25/llm-expectations/tree/main/examples/ticket-routing
+[notes]: https://github.com/niruta25/llm-expectations/tree/main/examples/release-notes
+[invoices]: https://github.com/niruta25/llm-expectations/tree/main/examples/invoice-extraction
 [example]: https://github.com/niruta25/llm-expectations/tree/main/examples/jtbd
 
 ## Reading order

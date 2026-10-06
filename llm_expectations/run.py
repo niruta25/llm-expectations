@@ -35,12 +35,9 @@ from .judges.base import Judge, JudgeTask, Provider, ReplyOutcome
 from .judges.panel import CHECK_ID as PANEL_CHECK
 from .judges.panel import majority, sample_items
 from .judges.prompts import (
-    CLAIM_TOKENS,
-    ClaimSupportTask,
-    GroundednessTask,
+    GATED_KINDS,
+    JUDGEABLE,
     LabelCorrectTask,
-    copied_is_judgeable,
-    free_text_is_judgeable,
     label_is_judgeable,
 )
 from .judges.providers import build_provider
@@ -59,7 +56,7 @@ from .metrics.classification import (
 from .plan import Plan, estimate_cost, plan_run
 from .read import index_items, read_labels, read_outputs
 from .report import render
-from .schema import FieldKind, FieldSpec
+from .schema import FieldKind, FieldSpec, ValueType
 from .stability import (
     StabilityReport,
     measure_stability,
@@ -278,26 +275,11 @@ def check_context(
     )
 
 
-#: The kinds whose free checks are predictive enough to decide what gets
-#: paid for, and how to ask a judge about one. Adding a fourth kind means
-#: adding a row here, not editing the collector — which is what §4's seam is
-#: supposed to buy.
-#:
-#: `assigned` is deliberately absent. Its free checks catch format problems
-#: only, so a well-formed wrong label passes every one of them and the triage
-#: judge has to see everything.
-GATED_KINDS: Mapping[FieldKind, Callable[[FieldSpec, RunConfig], JudgeTask]] = {
-    FieldKind.FREE_TEXT: lambda spec, config: ClaimSupportTask(
-        style=spec.style.value if spec.style else "descriptive",
-        max_tokens=max(int(config.settings.value("judge_max_tokens")), CLAIM_TOKENS),
-    ),
-    FieldKind.COPIED: lambda spec, config: GroundednessTask(),
-}
-
-_JUDGEABLE: Mapping[FieldKind, Callable[[Output, str], bool]] = {
-    FieldKind.FREE_TEXT: free_text_is_judgeable,
-    FieldKind.COPIED: copied_is_judgeable,
-}
+#: Re-exported from ``judges.prompts``, where the registry lives beside the
+#: tasks it builds. Kept here because this is where readers of the collector
+#: look for it, and because ``plan`` needs the same table: a cost estimate
+#: built from a different task than the one the run sends is a guess.
+_JUDGEABLE = JUDGEABLE
 
 
 def gated_plan(
@@ -456,7 +438,9 @@ def collect(
             build_task = GATED_KINDS.get(gated_spec.kind)
             if build_task is None:
                 continue
-            gated_task = build_task(gated_spec, config)
+            gated_task = build_task(
+                gated_spec, int(config.settings.value("judge_max_tokens"))
+            )
             for item_id in (*suspicious, *audit):
                 written = outputs.get(item_id)
                 if written is None:
@@ -603,6 +587,20 @@ def gold_valued_fields(config: RunConfig) -> tuple[str, ...]:
 
 #: Kept for callers that predate copied fields having gold values.
 assigned_fields = gold_valued_fields
+
+
+def defect_rated_fields(config: RunConfig) -> tuple[str, ...]:
+    """The fields a human answer is a *defect rating* for, not a value.
+
+    Free text, and only free text. An item is an error on one of these when
+    the rater ticked any box other than "none" — which is a perfectly good
+    target, and quite different from comparing a box name to a sentence.
+    """
+    return tuple(
+        name
+        for name, spec in config.schema.fields.items()
+        if spec.kind is FieldKind.FREE_TEXT
+    )
 
 
 def scoring_context(
@@ -809,7 +807,7 @@ def human_findings(run_id: str, config: RunConfig, dataset: Dataset) -> list[Fin
     findings: list[Finding] = []
     for name, spec in config.schema.fields.items():
         if spec.kind is FieldKind.COPIED:
-            findings.extend(_copied_vs_human(run_id, name, dataset))
+            findings.extend(_copied_vs_human(run_id, name, dataset, spec, config))
             continue
         if spec.kind is not FieldKind.ASSIGNED:
             continue
@@ -849,25 +847,57 @@ def human_findings(run_id: str, config: RunConfig, dataset: Dataset) -> list[Fin
     return findings
 
 
-def _copied_vs_human(run_id: str, field: str, dataset: Dataset) -> list[Finding]:
+def _copied_vs_human(
+    run_id: str, field: str, dataset: Dataset, spec: FieldSpec, config: RunConfig
+) -> list[Finding]:
     """Did the extracted value match the one a person read off the document?
 
-    Exact match after the field's own normalisation, not a tree bucket:
-    there is no hierarchy to award partial credit on. An amount is the right
-    amount or it is a different amount.
-    """
-    from .checks.copied import normalise, parse_number
+    No tree bucket: there is no hierarchy to award partial credit on. An
+    amount is the right amount or it is a different amount.
 
+    But *same* means the same thing here as it does in the free check, and
+    for the same reason. ``$1,234.50`` and ``1234.5`` are one amount;
+    ``March 5, 2026`` and ``2026-03-05`` are one day. Comparing characters
+    would report the model as wrong every time it tidied a format, and the
+    accuracy number would be measuring formatting. ``require_verbatim`` is
+    the field saying the characters really do matter, and then they do.
+
+    A value that cannot be read as the type the field declares is unscored
+    rather than wrong. ``04/05/2026`` is not a date this library will guess
+    at, so it has no opinion on whether it matches — ``value_shape`` owns
+    that row, and counting it here as a mismatch would charge the model
+    twice for one defect.
+    """
+    from .checks.copied import readable, same_value
+
+    kind = spec.value_type or ValueType.TEXT
+    verbatim = bool(config.settings.value("require_verbatim", spec))
     findings = []
     for item_id, answer in primary_labels(dataset.labels, field).items():
         output = dataset.outputs.get(item_id)
         if output is None:
             continue
         got = output.get(field)
-        same = normalise(str(got)) == normalise(answer)
-        if not same:
-            numbers = (parse_number(str(got)), parse_number(answer))
-            same = numbers[0] is not None and numbers[0] == numbers[1]
+        if not verbatim and not readable(str(got), kind):
+            findings.append(
+                Finding(
+                    run_id=run_id,
+                    check="value_matches_human",
+                    grain=Grain.FIELD,
+                    status=Status.UNSCORED,
+                    item_id=item_id,
+                    field=field,
+                    evidence={
+                        "human": answer,
+                        "extracted": got,
+                        "why": f"{got!r} cannot be read as a {kind.value}, so there is "
+                        "nothing to compare against the human answer. value_shape owns "
+                        "this row.",
+                    },
+                )
+            )
+            continue
+        same = same_value(str(got), answer, kind, verbatim=verbatim)
         findings.append(
             Finding(
                 run_id=run_id,
@@ -1162,7 +1192,9 @@ def triage_evaluation(
     triage = config.judges.triage
     if triage is None or not labels:
         return {}
-    target = build_target(labels, outputs, gold_valued_fields(config))
+    target = build_target(
+        labels, outputs, gold_valued_fields(config), rated=defect_rated_fields(config)
+    )
     if not target.truth or not target.positives:
         return {
             "skipped": (
@@ -1394,18 +1426,35 @@ def free_gate_quality(
     findings: Sequence[Finding],
     selection: Mapping[str, Mapping[str, int]] | None = None,
 ) -> dict[str, Any]:
-    """Did the free checks actually predict invention, or is that folklore?
+    """Did the free checks actually predict a defect, or is that folklore?
 
-    DESIGN.md §8 claims the free-text gate is predictive, which is why it is
-    allowed to decide what gets paid for. The audit sample is how that claim
-    gets checked rather than repeated: of the rows nothing flagged, how many
-    did the judge find invention in anyway?
+    DESIGN.md §8 claims the gate is predictive, which is why it is allowed to
+    decide what gets paid for. The audit sample is how that claim gets
+    checked rather than repeated: of the rows nothing flagged, how many did
+    the judge find fault with anyway?
+
+    Which bucket a row is in comes from ``plan``, not from what the verdict
+    remembers. The gate is deterministic from the data, so a re-analysis
+    lands on the same rows the run paid for — whereas the verdict's own note
+    of how it was chosen does not survive a round trip through the cache, and
+    reading it would quietly report a gate nobody measured as a gate that
+    found nothing.
     """
+    gated_checks = {"claims_supported", "value_grounded"}
+    flagged_rows = {(name, i) for name, (suspicious, _) in plan.items() for i in suspicious}
+    audit_rows = {(name, i) for name, (_, audit) in plan.items() for i in audit}
+
     by_selection: dict[str, dict[str, int]] = {}
     for found in findings:
-        if found.check != "claims_supported" or found.status is Status.UNSCORED:
+        if found.check not in gated_checks or found.status is Status.UNSCORED:
             continue
-        bucket = str(found.evidence.get("selected_by") or "unknown")
+        where = (str(found.field), str(found.item_id))
+        if where in flagged_rows:
+            bucket = "free check"
+        elif where in audit_rows:
+            bucket = "audit"
+        else:
+            bucket = str(found.evidence.get("selected_by") or "unknown")
         tally = by_selection.setdefault(bucket, {"judged": 0, "failed": 0})
         tally["judged"] += 1
         tally["failed"] += int(found.status is Status.FAIL)
@@ -1438,19 +1487,19 @@ def free_gate_quality(
         out["precision"] = flagged["failed"] / flagged["judged"]
         if not flagged["failed"]:
             out["gate_note"] = (
-                f"the free checks flagged {flagged['judged']} row(s) and the judge found "
-                "nothing ungrounded in any of them — the gate is spending on rows that "
-                "were fine"
+                f"the free checks flagged {flagged['judged']} row(s) and the judge "
+                "found nothing wrong with any of them — the gate is spending on rows "
+                "that were fine"
             )
     if audited["judged"]:
         out["miss_rate"] = audited["failed"] / audited["judged"]
         out["why"] = (
             f"{audited['failed']} of {audited['judged']} audited rows that no free check "
-            "flagged turned out to have an unsupported claim. That is what the free gate "
-            "is missing, measured rather than assumed."
+            "flagged turned out to be wrong anyway. That is what the gate is missing, "
+            "measured rather than assumed."
             if audited["failed"]
             else f"none of the {audited['judged']} audited rows that no free check flagged "
-            "had an unsupported claim — the gate held on this sample."
+            "turned out to be wrong — the gate held on this sample."
         )
     return out
 
@@ -1830,9 +1879,17 @@ def _analyse(
         target_errors=gate2.target_errors,
     )
 
-    # A model with no published price produces no cost, not a zero. Reporting
+    # A model with no published price produces no cost, not a zero: reporting
     # $0.00 for a run against an unpriced judge would be a made-up number.
-    priced = plan is None or not plan.unpriced_models
+    #
+    # But only when this invocation actually called one. A run that collected
+    # nothing — every verdict a cache hit, or a re-analysis — spent nothing,
+    # whatever its judges would have cost had it asked them, and withholding
+    # that zero would be its own small lie.
+    unpriced = frozenset(plan.unpriced_models) if plan else frozenset()
+    priced = not unpriced or not any(
+        str(v.metadata.get("model", "")) in unpriced for v in collected
+    )
     spent = sum(
         f.cost_usd
         for f in findings

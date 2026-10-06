@@ -1,0 +1,17 @@
+run_id: routing-v2               # a timestamp is added automatically
+
+items:    items.jsonl
+outputs:  outputs.jsonl
+labels:   labels.jsonl
+schema:   schema.yml
+taxonomy: [queues.yml, severity.yml]
+judges:   judges.yml
+settings: settings.yml
+
+produced_by:
+  model: claude-sonnet-5
+  prompt_version: router-v2
+
+budget:
+  max_usd: 12.00
+  confirm: true
