@@ -21,11 +21,12 @@
 6. [Judges](#6-judges)
 7. [Calibration, risk and triage](#7-calibration-risk-and-triage)
 8. [Free text fields](#8-free-text-fields)
-9. [Taxonomy](#9-taxonomy)
-10. [Guardrails](#10-guardrails)
-11. [Config and report](#11-config-and-report)
-12. [Repo layout and build order](#12-repo-layout-and-build-order)
-13. [v1 — what we are not building yet](#13-v1--what-we-are-not-building-yet)
+9. [Copied fields](#9-copied-fields)
+10. [Taxonomy](#10-taxonomy)
+11. [Guardrails](#11-guardrails)
+12. [Config and report](#12-config-and-report)
+13. [Repo layout and build order](#13-repo-layout-and-build-order)
+14. [v1 — what we are not building yet](#14-v1--what-we-are-not-building-yet)
 
 ---
 
@@ -47,8 +48,12 @@ None of that appears in the source text. Searching for it tells you nothing.
 Existing data-quality tools assume you can reconcile a value against something;
 here there is nothing to reconcile against.
 
-This tool covers those two kinds of field, and does it without pretending to
-certainty it has not earned.
+This tool covers all three, and does it without pretending to certainty it has
+not earned. The third is the easy one and other tools cover it — but only half
+of it. Checking that a value appears in the document is where they stop, and
+that is the half that does not matter: a document listing a subtotal, a
+shipping charge and a total contains the number you extracted whichever of the
+three you meant.
 
 ### Three kinds of field
 
@@ -63,8 +68,8 @@ certainty it has not earned.
    └────────────────────────────┘  └────────────────────────────┘
 
    ┌─── COPIED ────────────────┐
-   │  a value in the document   │   v1 — the seam is ready,
-   │  amount, date, vendor      │   not built yet
+   │  a value in the document   │   absence is proof of invention
+   │  amount, date, vendor      │   → presence is only evidence
    └────────────────────────────┘
 ```
 
@@ -954,7 +959,7 @@ you see *why* judges split.
 noise. It maps to unscored, never to "wrong".
 
 **A rejecting judge names its alternative.** Five extra output tokens, and it
-is what makes the fuzzy-pair detector real rather than inferred — see §9. It
+is what makes the fuzzy-pair detector real rather than inferred — see §10. It
 is also the first thing a reviewer opening the item wants to know.
 
 **Every panel judge gets the byte-identical prompt.** Otherwise panel
@@ -1501,7 +1506,77 @@ If 15% of summaries get flagged and you audit 5% of the rest, you pay for about
 
 ---
 
-## 9. Taxonomy
+## 9. Copied fields
+
+Values that live *in* the item: amounts, dates, names, IDs.
+
+```yaml
+fields:
+  total:
+    kind: copied
+    value_type: number        # text | number | date
+    min_grounding: 0.95
+    ambiguous_above: 1
+  issued:
+    kind: copied
+    value_type: date
+  invoice_no:
+    kind: copied
+    require_verbatim: true    # the characters matter for an identifier
+```
+
+### Absence is proof. Presence is only evidence.
+
+This is the one kind with a free check that can *prove* a defect: a value the
+document does not contain was invented, and establishing that costs nothing.
+It is why copied fields are the cheapest of the three to check.
+
+What the same check cannot establish is that a value it *found* is the right
+one:
+
+```
+   DOCUMENT   Subtotal $1,200.00, shipping $34.50, total $1,234.50.
+   EXTRACTED  total: 34.50
+
+   value_in_source   ✓ present
+   the truth         ✗ that is the shipping charge
+```
+
+Every tool that stops at "is it in the document" reports that row as clean.
+So `value_in_source` carries **how many candidates the document held**, and
+the gate sends ambiguous rows to a judge even though they passed. Treating a
+lucky match as a verified value is the trap this kind invites.
+
+The gap between the two numbers is the finding:
+
+```
+   value is in the document      94.0%     the free check's ceiling
+   matches the human answer      83.0%     what was actually right
+                                 ─────
+                                 11pp      values present, and wrong
+```
+
+### Matching is by meaning
+
+`$1,234.50` and `1234.5` are the same amount. `March 3, 2026` and
+`2026-03-03` are the same date. A checker comparing characters would report
+the model as inventing a value every time it tidied a format, and the
+resulting grounding rate would measure formatting rather than fidelity.
+
+`value_type` decides the comparison; `require_verbatim` is for the fields
+where the characters really do matter, like an invoice number or a SKU. A
+date in a shape the library does not understand is reported as unparseable
+rather than guessed at — one read the wrong way round is worse than one the
+tool admits it cannot read.
+
+### How much the gate saves is a property of your documents
+
+With one amount per receipt, nearly every row is confirmed for free. With a
+subtotal, a shipping charge and a total on every invoice, *every* row is
+ambiguous and the gate saves nothing. Neither is a fault; the report prints
+the breakdown rather than letting anyone assume the first case.
+
+## 10. Taxonomy
 
 ### One file, four readers
 
@@ -1647,7 +1722,7 @@ Run before you spend anything, no data required:
 
 ---
 
-## 10. Guardrails
+## 11. Guardrails
 
 Checks on the **measurement**, not on your data. They run first, cost nothing,
 and are always on.
@@ -1793,7 +1868,7 @@ it is a bug check.
 
 ---
 
-## 11. Config and report
+## 12. Config and report
 
 ### The files
 
@@ -1956,7 +2031,7 @@ baseline is not a result.
 
 ---
 
-## 12. Repo layout and build order
+## 13. Repo layout and build order
 
 ### Layout
 
@@ -2008,6 +2083,7 @@ llm-expectations/
       base.py         Check protocol, three grains
       assigned.py
       free_text.py
+      copied.py       value in source, shape, grounding rate
       item.py         cross-field consistency
       corpus.py       distribution, drift, boilerplate
 
@@ -2086,7 +2162,7 @@ that would break it is kept out.
        ~2 days
 ```
 
-All of the above is built. What follows in §13 is not.
+All of the above is built. What follows in §14 is not.
 
 **Judge health goes into M1, not M4.** Approval rate and parse rate are about
 twenty lines each, and without them the first shippable version could be quietly
@@ -2133,7 +2209,7 @@ Each pins a mistake that is easy to make and hard to see:
 5. A number a guardrail invalidated is withheld, not printed with a caveat —
    and a number that is merely *underpowered* is printed, with its interval
    and a line saying it cannot support a conclusion. Those are different
-   cases and §10 treats them differently: Tier 1 suppresses, Tier 2 reports
+   cases and §11 treats them differently: Tier 1 suppresses, Tier 2 reports
    and flags.
 6. `analyse` makes zero model calls
 7. Editing a taxonomy without bumping the version is an error
@@ -2156,29 +2232,10 @@ Each pins a mistake that is easy to make and hard to see:
 
 ---
 
-## 13. v1 — what we are not building yet
+## 14. v1 — what we are not building yet
 
 Each has a reason to wait and a seam already in place, so none requires a
 rewrite.
-
-### Copied fields — the third kind
-
-Values that live *in* the item: amounts, dates, names, IDs.
-
-```python
-COPIED = FieldKind(
-    name="copied",
-    checks=[value_in_source, span_matches, ...],
-    judge_task=GroundednessTask(),
-    metrics=[grounding_rate],
-)
-```
-
-The engine, gates, cache, panel and report do not change. This is the test of
-whether the seam in section 4 is in the right place.
-
-**Why later:** the work here is assigned and free text. Copied is the
-well-trodden case and other tools cover it.
 
 ### Derived thresholds
 

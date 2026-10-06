@@ -3,7 +3,7 @@
 Nothing has to be configured to start. Every default lives in a registry here
 or in ``schema.py``, and resolving one returns the value *and where it came
 from*, because a threshold printed without its source is a number nobody can
-argue with (DESIGN.md §11).
+argue with (DESIGN.md §12).
 
     built-in defaults
          ↓  overridden by

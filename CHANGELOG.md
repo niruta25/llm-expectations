@@ -2,7 +2,7 @@
 
 ## 0.1.0
 
-The first version that does anything. Every milestone in DESIGN.md §12 is
+The first version that does anything. Every milestone in DESIGN.md §13 is
 built: free checks on both kinds of field, a triage judge, a panel, both
 gates, label-backed metrics, a fitted calibration, Error Recall@Budget, and
 comparison across runs.

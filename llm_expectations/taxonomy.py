@@ -1,6 +1,6 @@
 """The label tree: parsing, lookups, version hashing, and static health checks.
 
-One file has four readers (DESIGN.md §9) — the judge prompt, the validity
+One file has four readers (DESIGN.md §10) — the judge prompt, the validity
 check, tree scoring, and cross-field consistency — plus a fifth that matters
 most and lives outside the code: the human annotator reads the same
 definitions, word for word. If the judge and the human read different

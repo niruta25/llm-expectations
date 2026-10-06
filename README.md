@@ -28,7 +28,7 @@ against. This tool covers those two kinds of field — **assigned** labels and
 ## Status
 
 **Alpha — every milestone in the design is built.** Both gates, free checks
-on both kinds of field, a panel, human answers grading the model and its
+on all three kinds of field, a panel, human answers grading the model and its
 judges, a fitted calibration, the operating-point table a review budget needs,
 free text, and runs set against each other.
 
@@ -134,9 +134,9 @@ and fits no calibration, which is what a fixture that size should do.
 | M7 | across runs | done |
 | M8 | polish, docs, worked example | **done** |
 
-What is deliberately *not* built is in [DESIGN.md §13][design] — copied
-fields, derived thresholds, the A/B significance test, multi-label, reasoning
-judges — each with a reason to wait and a seam already in place.
+What is deliberately *not* built is in [DESIGN.md §14][design] — derived
+thresholds, the A/B significance test, multi-label, reasoning judges — each
+with a reason to wait and a seam already in place.
 
 ## License
 

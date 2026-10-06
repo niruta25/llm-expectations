@@ -6,7 +6,7 @@
     GATE 2   Is the judge better than nothing?
              If it loses to a trivial baseline, you are paying for noise.
 
-A gate firing does **not** kill the run (DESIGN.md §10). It removes the
+A gate firing does **not** kill the run (DESIGN.md §11). It removes the
 numbers it invalidates and says which and why, so a run that is partly
 measurable reports the part that is. That is what ``Suppression`` is for: a
 guardrail names the metrics it poisons, and anything holding one of those
@@ -384,10 +384,15 @@ def gate_two(
     has not been shown to beat anything.
     """
     settings = config.settings
-    assigned = tuple(
-        name for name, spec in config.schema.fields.items() if spec.kind.value == "assigned"
+    # Assigned and copied both have one right answer a label can be. Free
+    # text does not — its labels are defect ratings, and comparing a box name
+    # against a sentence marks every row an error.
+    gold_valued = tuple(
+        name
+        for name, spec in config.schema.fields.items()
+        if spec.kind.value in {"assigned", "copied"}
     )
-    target = build_target(labels, outputs, assigned)
+    target = build_target(labels, outputs, gold_valued)
 
     if not target.truth:
         return GateTwo(

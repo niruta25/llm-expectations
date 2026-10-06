@@ -34,8 +34,8 @@ say which run is better, because most items tie in a real A/B and a net delta
 without a test is how underpowered changes get shipped. Two runs on different
 taxonomy versions refuse to compare at all without a migration mapping.
 
-That is M0 through M7 (DESIGN.md §12) — every build milestone. What remains is
-polish, and the v1 list in §13.
+That is M0 through M7 (DESIGN.md §13) — every build milestone. What remains is
+polish, and the v1 list in §14.
 
   - assigned fields   a label chosen from a versioned taxonomy
   - free text fields  a sentence written about the item

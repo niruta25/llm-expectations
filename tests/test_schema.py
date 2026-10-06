@@ -10,6 +10,7 @@ from llm_expectations.schema import (
     FieldKind,
     SchemaError,
     TextStyle,
+    ValueType,
     schema_from_mapping,
 )
 
@@ -41,9 +42,31 @@ def test_an_assigned_field_needs_a_pinned_taxonomy():
         build(jtbd={"kind": "assigned"})
 
 
-def test_copied_fields_say_they_are_v1_rather_than_doing_nothing():
-    with pytest.raises(SchemaError, match="v1"):
-        build(amount={"kind": "copied"})
+def test_all_three_field_kinds_are_accepted():
+    schema = build(
+        jtbd=ASSIGNED,
+        summary={"kind": "free_text"},
+        amount={"kind": "copied", "value_type": "number"},
+    )
+    assert {f.kind for f in schema.fields.values()} == set(FieldKind)
+
+
+def test_a_copied_field_defaults_to_text_and_takes_a_value_type():
+    assert build(vendor={"kind": "copied"})["vendor"].value_type is ValueType.TEXT
+    assert (
+        build(issued={"kind": "copied", "value_type": "date"})["issued"].value_type
+        is ValueType.DATE
+    )
+
+
+def test_an_unknown_value_type_lists_the_real_ones():
+    with pytest.raises(SchemaError, match="Permitted: text, number, date"):
+        build(amount={"kind": "copied", "value_type": "currency"})
+
+
+def test_only_a_copied_field_has_a_value_type():
+    with pytest.raises(SchemaError, match="has no value_type"):
+        build(summary={"kind": "free_text", "value_type": "number"})
 
 
 def test_an_unknown_key_is_an_error_because_a_threshold_that_is_not_read_does_nothing():

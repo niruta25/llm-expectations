@@ -3,7 +3,7 @@
 A judge approving 94% of everything passes every format check ever written and
 quietly destroys anything built on it. This table is the only thing that
 catches it, which is why it runs as the verdicts arrive rather than waiting
-for the rest of the guardrails (DESIGN.md §12).
+for the rest of the guardrails (DESIGN.md §13).
 
 Two denominators, on purpose:
 

@@ -2,7 +2,7 @@
 
 This module imports nothing from the rest of the package, and nothing else in
 the package may make it. If something here needs to import upward, the layering
-is wrong (DESIGN.md §12).
+is wrong (DESIGN.md §13).
 
 Two absences are deliberate and are pinned by tests:
 
@@ -79,7 +79,7 @@ class Severity(Enum):
     """How hard a guardrail bites. None of them fail the run.
 
     ``STOP`` removes the numbers it invalidates and reports why; it does not
-    stop the run (DESIGN.md §10).
+    stop the run (DESIGN.md §11).
     """
 
     STOP = "stop"

@@ -69,11 +69,19 @@ class TestEndToEnd:
         # they wait for rather than quietly not appearing.
         result = execute(example, tmp_path / "out", provider)
         # Rows nothing flagged, and that the audit did not pick, are not
-        # judged — and say that rather than quietly not appearing.
-        defects = [f for f in result.findings if f.field == "summary" and f.check == "free_text"]
-        assert defects
-        assert all(f.status is Status.UNSCORED for f in defects)
-        assert all("no claim judge was paid for it" in f.evidence["reason"] for f in defects)
+        # judged — and say that rather than quietly not appearing. They
+        # carry the same check id as the rows that *were* judged, so the
+        # field reads as one check with three outcomes rather than growing
+        # a phantom second check for the unpaid rows.
+        rows = [
+            f for f in result.findings
+            if f.field == "summary" and f.check == "claims_supported"
+        ]
+        unpaid = [f for f in rows if f.status is Status.UNSCORED]
+        assert unpaid
+        assert all("no claim judge was paid for it" in f.evidence["reason"] for f in unpaid)
+        # And every eligible row is accounted for exactly once.
+        assert len({f.item_id for f in rows}) == len(rows)
 
     def test_an_item_with_nothing_readable_stays_unranked(self, example, tmp_path, scripted):
         # An unreadable reply contributes no score. An item where *every*
