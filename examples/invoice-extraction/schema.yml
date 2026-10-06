@@ -1,0 +1,33 @@
+# Three copied fields and nothing else. Every answer is supposed to be *in*
+# the document, which is the only kind of field where a defect can be proved
+# for nothing — and the only kind where proving the opposite is impossible.
+item: supplier_invoice
+
+fields:
+  invoice_number:
+    kind: copied
+    value_type: text
+    # The characters matter. "INV-10594" and "INV10594" are the same invoice
+    # to a person and two different strings to the ledger that has to match
+    # them against a payment, so this is the one field where a tidied format
+    # is a defect rather than a courtesy.
+    require_verbatim: true
+
+  invoice_date:
+    kind: copied
+    value_type: date
+    # Dates are matched by meaning: "2026-03-05" and "March 5, 2026" are the
+    # same day. A date in a shape the library cannot read safely is reported
+    # unparseable rather than guessed at.
+
+  total:
+    kind: copied
+    value_type: number
+    # Every invoice here carries a subtotal, a carriage charge, a VAT line
+    # and a total, so *finding* the extracted amount in the document proves
+    # almost nothing. One candidate would make a match strong; four makes it
+    # a coincidence until a judge says otherwise.
+    ambiguous_above: 1
+    # Six per cent of totals are invented on this corpus, so the default
+    # 95% floor is where it should be: it fails, loudly, and it is right to.
+    min_grounding: 0.95

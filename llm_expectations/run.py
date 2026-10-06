@@ -35,10 +35,9 @@ from .judges.base import Judge, JudgeTask, Provider, ReplyOutcome
 from .judges.panel import CHECK_ID as PANEL_CHECK
 from .judges.panel import majority, sample_items
 from .judges.prompts import (
-    CLAIM_TOKENS,
-    ClaimSupportTask,
+    GATED_KINDS,
+    JUDGEABLE,
     LabelCorrectTask,
-    free_text_is_judgeable,
     label_is_judgeable,
 )
 from .judges.providers import build_provider
@@ -57,7 +56,7 @@ from .metrics.classification import (
 from .plan import Plan, estimate_cost, plan_run
 from .read import index_items, read_labels, read_outputs
 from .report import render
-from .schema import FieldKind, FieldSpec
+from .schema import FieldKind, FieldSpec, ValueType
 from .stability import (
     StabilityReport,
     measure_stability,
@@ -276,38 +275,67 @@ def check_context(
     )
 
 
-def free_text_plan(
+#: Re-exported from ``judges.prompts``, where the registry lives beside the
+#: tasks it builds. Kept here because this is where readers of the collector
+#: look for it, and because ``plan`` needs the same table: a cost estimate
+#: built from a different task than the one the run sends is a guess.
+_JUDGEABLE = JUDGEABLE
+
+
+def gated_plan(
     config: RunConfig,
     items: Mapping[str, Item],
     outputs: Mapping[str, Output],
     flagged: Mapping[str, set[str]],
+    *,
+    ctx: CheckContext | None = None,
+    selection: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, tuple[tuple[str, ...], tuple[str, ...]]]:
-    """Which free-text rows to judge: the suspicious ones, plus an audit.
+    """Which rows to judge: the suspicious ones, plus an audit.
 
-    This is the part that makes free text cheaper than assigned, and it is
-    the opposite of what you would guess. The assigned free checks catch
-    *format* problems, so a perfectly formed wrong label sails through and
-    the triage judge has to see everything. The free-text checks catch
-    *content* problems — no specific detail, contradicts the label — and
-    those genuinely predict invention, so they gate the expensive call.
+    This is the part that makes free text and copied fields cheaper than
+    assigned, and it is the opposite of what you would guess. The assigned
+    free checks catch *format* problems, so a perfectly formed wrong label
+    sails through and the triage judge has to see everything. The other two
+    kinds have free checks that catch *content* problems — no detail from the
+    item, contradicts the label, not in the document at all — and those
+    genuinely predict a defect, so they gate the expensive call.
+
+    For copied fields the gate also sends rows that *passed*: a document
+    holding twelve candidate amounts contains the one the model reported
+    whether or not it is the right one, so a match there is a coincidence
+    until a judge says otherwise.
 
     The audit sample is why the gate is measured rather than trusted. Judging
     a slice of the rows nothing flagged is the only way to find out how much
     the free checks are missing, and without it "the gate is predictive"
     would be a claim this library makes about itself without evidence.
+
+    ``selection``, when given, is filled with why each row was chosen. How
+    much a gate saves is a property of your data, not of this library, and
+    the only way anyone finds out is by reading it back.
     """
+    from .checks.copied import ambiguous
+
     rate = float(config.settings.value("free_text_audit_rate"))
     plan: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+    reasons: dict[str, dict[str, int]] = {} if selection is None else selection
     for name, spec in config.schema.fields.items():
-        if spec.kind is not FieldKind.FREE_TEXT:
+        if spec.kind not in GATED_KINDS:
             continue
+        judgeable = _JUDGEABLE[spec.kind]
         eligible = [
             i
             for i in items
-            if (row := outputs.get(i)) is not None and free_text_is_judgeable(row, name)
+            if (row := outputs.get(i)) is not None and judgeable(row, name)
         ]
-        suspicious = tuple(sorted(i for i in eligible if name in flagged.get(i, set())))
-        rest = [i for i in eligible if i not in set(suspicious)]
+        failed = {i for i in eligible if name in flagged.get(i, set())}
+        unclear: set[str] = set()
+        if spec.kind is FieldKind.COPIED and ctx is not None:
+            unclear = {i for i in eligible if i not in failed and ambiguous(spec, ctx, i)}
+        suspect = failed | unclear
+        suspicious = tuple(sorted(suspect))
+        rest = [i for i in eligible if i not in suspect]
         # At least one, whenever an audit was asked for and there is anything
         # to audit. A rate that rounds to zero on a small corpus silently
         # turns the measurement off, and the gate goes back to being trusted
@@ -317,12 +345,29 @@ def free_text_plan(
             wanted = max(1, wanted)
         audit = sample_items(tuple(rest), wanted, seed=f"audit:{name}")
         plan[name] = (suspicious, tuple(sorted(audit)))
+        reasons[name] = {
+            "failed_a_check": len(failed),
+            "too_many_candidates": len(unclear),
+            "audited": len(audit),
+            "not_judged": len(rest) - len(audit),
+        }
     return plan
+
+
+#: Kept so existing callers and tests read the same; the gate is general now.
+free_text_plan = gated_plan
 
 
 def flagged_by_free_checks(findings: Sequence[Finding]) -> dict[str, set[str]]:
     """Which (item, field) pairs a free check already found fault with."""
-    gates = {"specificity", "copy_ratio", "length_in_bounds", "cross_field_agreement"}
+    gates = {
+        "specificity",
+        "copy_ratio",
+        "length_in_bounds",
+        "cross_field_agreement",
+        "value_in_source",
+        "value_shape",
+    }
     out: dict[str, set[str]] = {}
     for found in findings:
         if found.check in gates and found.status is Status.FAIL and found.item_id:
@@ -389,17 +434,19 @@ def collect(
         judge = _judge_for(config, triage.judge, providers[triage.judge])
         model = config.judges.judges[triage.judge].model
         for name, (suspicious, audit) in sorted(free_text.items()):
-            text_spec = config.schema[name]
-            claims = ClaimSupportTask(
-                style=text_spec.style.value if text_spec.style else "descriptive",
-                max_tokens=max(int(config.settings.value("judge_max_tokens")), CLAIM_TOKENS),
+            gated_spec = config.schema[name]
+            build_task = GATED_KINDS.get(gated_spec.kind)
+            if build_task is None:
+                continue
+            gated_task = build_task(
+                gated_spec, int(config.settings.value("judge_max_tokens"))
             )
             for item_id in (*suspicious, *audit):
                 written = outputs.get(item_id)
                 if written is None:
                     continue
                 verdict = _ask_cached(
-                    judge, model, claims, items[item_id], written, name, None,
+                    judge, model, gated_task, items[item_id], written, name, None,
                     cache=cache, guard=guard,
                 )
                 verdicts.append(
@@ -451,7 +498,11 @@ def to_findings(
         for v in verdicts
         if v.check_id == "label_correct" and (ranker is None or v.judge_id == ranker)
     ]
-    judged = {(v.item_id, v.field) for v in scored}
+    # Every row any judge actually answered about, whatever the question.
+    # Built from `scored` alone, this missed the rows the claim and
+    # groundedness judges saw, and each of those got an "unjudged"
+    # placeholder beside its real finding.
+    judged = {(v.item_id, v.field) for v in verdicts}
 
     findings = [
         Finding(
@@ -485,19 +536,29 @@ def to_findings(
     ]
 
     for name, spec in config.schema.fields.items():
-        why = (
-            "nothing here was flagged by a free check and it was not in the audit "
-            "sample, so no claim judge was paid for it"
-            if spec.kind is FieldKind.FREE_TEXT
-            else "the label was an abstention, so there is nothing to check it against"
-        )
+        why = {
+            FieldKind.FREE_TEXT: "nothing here was flagged by a free check and it was "
+            "not in the audit sample, so no claim judge was paid for it",
+            FieldKind.COPIED: "the value is in its document and the document held no "
+            "other candidate, so no judge was paid to confirm it",
+            FieldKind.ASSIGNED: "the label was an abstention, so there is nothing to "
+            "check it against",
+        }[spec.kind]
         for item_id in dataset.outputs:
             if (item_id, name) in judged:
                 continue
             findings.append(
                 Finding(
                     run_id=run_id,
-                    check="label_correct" if spec.kind is FieldKind.ASSIGNED else "free_text",
+                    # The same check id the real findings carry, so a field
+                    # reads as one check with three outcomes — passed,
+                    # failed, and not looked at — rather than growing a
+                    # phantom second check for the rows nobody paid for.
+                    check={
+                        FieldKind.ASSIGNED: "label_correct",
+                        FieldKind.FREE_TEXT: "claims_supported",
+                        FieldKind.COPIED: "value_grounded",
+                    }[spec.kind],
                     grain=Grain.FIELD,
                     status=Status.UNSCORED,
                     item_id=item_id,
@@ -508,17 +569,37 @@ def to_findings(
     return findings
 
 
-def assigned_fields(config: RunConfig) -> tuple[str, ...]:
-    """The fields a human answer can be a gold value for.
+def gold_valued_fields(config: RunConfig) -> tuple[str, ...]:
+    """The fields a human answer is a gold *value* for.
 
-    A free-text field carries defect ratings instead, and treating one as an
-    answer key compares a box name against a sentence — every row an error,
-    and nothing about it looks wrong.
+    Assigned and copied both have one right answer, so a label is something
+    an output can be compared against. Free text does not — two summaries
+    can be equally good and share almost no words — so its labels are defect
+    ratings, and treating one as an answer key compares a box name against a
+    sentence: every row an error, and nothing about it looks wrong.
     """
     return tuple(
         name
         for name, spec in config.schema.fields.items()
-        if spec.kind is FieldKind.ASSIGNED
+        if spec.kind in {FieldKind.ASSIGNED, FieldKind.COPIED}
+    )
+
+
+#: Kept for callers that predate copied fields having gold values.
+assigned_fields = gold_valued_fields
+
+
+def defect_rated_fields(config: RunConfig) -> tuple[str, ...]:
+    """The fields a human answer is a *defect rating* for, not a value.
+
+    Free text, and only free text. An item is an error on one of these when
+    the rater ticked any box other than "none" — which is a perfectly good
+    target, and quite different from comparing a box name to a sentence.
+    """
+    return tuple(
+        name
+        for name, spec in config.schema.fields.items()
+        if spec.kind is FieldKind.FREE_TEXT
     )
 
 
@@ -613,8 +694,16 @@ def panel_analysis(
             ),
         }
     sample = set(sample_items(tuple(dataset.items), panel.sample))
+    # Its own question only. A panel member that is also the triage judge
+    # produces groundedness and claim verdicts too, and sweeping those into
+    # the vote would have the panel "agreeing" about questions it was never
+    # asked — on fields it never saw.
     in_panel = [
-        v for v in verdicts if v.judge_id in set(panel.members) and v.item_id in sample
+        v
+        for v in verdicts
+        if v.judge_id in set(panel.members)
+        and v.item_id in sample
+        and v.check_id == "label_correct"
     ]
 
     by_key: dict[tuple[str, str], list[Verdict]] = {}
@@ -717,6 +806,9 @@ def human_findings(run_id: str, config: RunConfig, dataset: Dataset) -> list[Fin
     }
     findings: list[Finding] = []
     for name, spec in config.schema.fields.items():
+        if spec.kind is FieldKind.COPIED:
+            findings.extend(_copied_vs_human(run_id, name, dataset, spec, config))
+            continue
         if spec.kind is not FieldKind.ASSIGNED:
             continue
         taxonomy = config.taxonomy_for(name)
@@ -752,6 +844,72 @@ def human_findings(run_id: str, config: RunConfig, dataset: Dataset) -> list[Fin
                     },
                 )
             )
+    return findings
+
+
+def _copied_vs_human(
+    run_id: str, field: str, dataset: Dataset, spec: FieldSpec, config: RunConfig
+) -> list[Finding]:
+    """Did the extracted value match the one a person read off the document?
+
+    No tree bucket: there is no hierarchy to award partial credit on. An
+    amount is the right amount or it is a different amount.
+
+    But *same* means the same thing here as it does in the free check, and
+    for the same reason. ``$1,234.50`` and ``1234.5`` are one amount;
+    ``March 5, 2026`` and ``2026-03-05`` are one day. Comparing characters
+    would report the model as wrong every time it tidied a format, and the
+    accuracy number would be measuring formatting. ``require_verbatim`` is
+    the field saying the characters really do matter, and then they do.
+
+    A value that cannot be read as the type the field declares is unscored
+    rather than wrong. ``04/05/2026`` is not a date this library will guess
+    at, so it has no opinion on whether it matches — ``value_shape`` owns
+    that row, and counting it here as a mismatch would charge the model
+    twice for one defect.
+    """
+    from .checks.copied import readable, same_value
+
+    kind = spec.value_type or ValueType.TEXT
+    verbatim = bool(config.settings.value("require_verbatim", spec))
+    findings = []
+    for item_id, answer in primary_labels(dataset.labels, field).items():
+        output = dataset.outputs.get(item_id)
+        if output is None:
+            continue
+        got = output.get(field)
+        if not verbatim and not readable(str(got), kind):
+            findings.append(
+                Finding(
+                    run_id=run_id,
+                    check="value_matches_human",
+                    grain=Grain.FIELD,
+                    status=Status.UNSCORED,
+                    item_id=item_id,
+                    field=field,
+                    evidence={
+                        "human": answer,
+                        "extracted": got,
+                        "why": f"{got!r} cannot be read as a {kind.value}, so there is "
+                        "nothing to compare against the human answer. value_shape owns "
+                        "this row.",
+                    },
+                )
+            )
+            continue
+        same = same_value(str(got), answer, kind, verbatim=verbatim)
+        findings.append(
+            Finding(
+                run_id=run_id,
+                check="value_matches_human",
+                grain=Grain.FIELD,
+                status=Status.PASS if same else Status.FAIL,
+                item_id=item_id,
+                field=field,
+                evidence={"human": answer, "extracted": got}
+                | ({} if same else {"why": f"a person read {answer!r} off this document"}),
+            )
+        )
     return findings
 
 
@@ -1034,7 +1192,9 @@ def triage_evaluation(
     triage = config.judges.triage
     if triage is None or not labels:
         return {}
-    target = build_target(labels, outputs, assigned_fields(config))
+    target = build_target(
+        labels, outputs, gold_valued_fields(config), rated=defect_rated_fields(config)
+    )
     if not target.truth or not target.positives:
         return {
             "skipped": (
@@ -1223,22 +1383,78 @@ def free_text_against_humans(
     return out
 
 
+def grounding_findings(
+    run_id: str, verdicts: Sequence[Verdict]
+) -> list[Finding]:
+    """One finding per judged value, carrying what the document supports.
+
+    The judge's verdict stands as the finding: unlike claim support there is
+    no per-row rate to put a threshold on, because a value is either the one
+    the document supports or it is not. ``min_grounding`` is a corpus check
+    on how many of them were.
+    """
+    findings = []
+    for verdict in verdicts:
+        if verdict.check_id != "value_grounded":
+            continue
+        findings.append(
+            Finding(
+                run_id=run_id,
+                check="value_grounded",
+                grain=Grain.FIELD,
+                status=verdict.status,
+                item_id=verdict.item_id,
+                field=verdict.field,
+                score=verdict.raw_confidence,
+                judge=verdict.judge_id,
+                evidence={
+                    "reason": verdict.reason,
+                    "selected_by": verdict.metadata.get("selected_by"),
+                    **(
+                        {"instead": verdict.detail["instead"]}
+                        if verdict.detail.get("instead")
+                        else {}
+                    ),
+                },
+            )
+        )
+    return findings
+
+
 def free_gate_quality(
     plan: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]],
     findings: Sequence[Finding],
+    selection: Mapping[str, Mapping[str, int]] | None = None,
 ) -> dict[str, Any]:
-    """Did the free checks actually predict invention, or is that folklore?
+    """Did the free checks actually predict a defect, or is that folklore?
 
-    DESIGN.md §8 claims the free-text gate is predictive, which is why it is
-    allowed to decide what gets paid for. The audit sample is how that claim
-    gets checked rather than repeated: of the rows nothing flagged, how many
-    did the judge find invention in anyway?
+    DESIGN.md §8 claims the gate is predictive, which is why it is allowed to
+    decide what gets paid for. The audit sample is how that claim gets
+    checked rather than repeated: of the rows nothing flagged, how many did
+    the judge find fault with anyway?
+
+    Which bucket a row is in comes from ``plan``, not from what the verdict
+    remembers. The gate is deterministic from the data, so a re-analysis
+    lands on the same rows the run paid for — whereas the verdict's own note
+    of how it was chosen does not survive a round trip through the cache, and
+    reading it would quietly report a gate nobody measured as a gate that
+    found nothing.
     """
+    gated_checks = {"claims_supported", "value_grounded"}
+    flagged_rows = {(name, i) for name, (suspicious, _) in plan.items() for i in suspicious}
+    audit_rows = {(name, i) for name, (_, audit) in plan.items() for i in audit}
+
     by_selection: dict[str, dict[str, int]] = {}
     for found in findings:
-        if found.check != "claims_supported" or found.status is Status.UNSCORED:
+        if found.check not in gated_checks or found.status is Status.UNSCORED:
             continue
-        bucket = str(found.evidence.get("selected_by") or "unknown")
+        where = (str(found.field), str(found.item_id))
+        if where in flagged_rows:
+            bucket = "free check"
+        elif where in audit_rows:
+            bucket = "audit"
+        else:
+            bucket = str(found.evidence.get("selected_by") or "unknown")
         tally = by_selection.setdefault(bucket, {"judged": 0, "failed": 0})
         tally["judged"] += 1
         tally["failed"] += int(found.status is Status.FAIL)
@@ -1249,27 +1465,41 @@ def free_gate_quality(
         "flagged": flagged,
         "audited": audited,
         "fields": {
-            name: {"flagged": len(suspicious), "audited": len(audit)}
+            name: {
+                "flagged": len(suspicious),
+                "audited": len(audit),
+                **(selection or {}).get(name, {}),
+            }
             for name, (suspicious, audit) in plan.items()
         },
     }
+    judged_rows = sum(len(a) + len(b) for a, b in plan.values())
+    eligible = sum(
+        sum(counts.values()) for counts in (selection or {}).values()
+    )
+    if eligible and judged_rows >= eligible:
+        out["saved_nothing"] = (
+            "every eligible row was judged, so the free gate saved nothing on this "
+            "corpus. How much it saves is a property of your documents: a value is "
+            "only cheap to confirm when its document holds no other candidate for it."
+        )
     if flagged["judged"]:
         out["precision"] = flagged["failed"] / flagged["judged"]
         if not flagged["failed"]:
             out["gate_note"] = (
-                f"the free checks flagged {flagged['judged']} row(s) and the judge found "
-                "nothing ungrounded in any of them — the gate is spending on rows that "
-                "were fine"
+                f"the free checks flagged {flagged['judged']} row(s) and the judge "
+                "found nothing wrong with any of them — the gate is spending on rows "
+                "that were fine"
             )
     if audited["judged"]:
         out["miss_rate"] = audited["failed"] / audited["judged"]
         out["why"] = (
             f"{audited['failed']} of {audited['judged']} audited rows that no free check "
-            "flagged turned out to have an unsupported claim. That is what the free gate "
-            "is missing, measured rather than assumed."
+            "flagged turned out to be wrong anyway. That is what the gate is missing, "
+            "measured rather than assumed."
             if audited["failed"]
             else f"none of the {audited['judged']} audited rows that no free check flagged "
-            "had an unsupported claim — the gate held on this sample."
+            "turned out to be wrong — the gate held on this sample."
         )
     return out
 
@@ -1434,9 +1664,16 @@ def run(
 
     # The free checks run before anything is spent, because their results
     # decide which free-text rows are worth paying a judge for.
-    gate_findings, _ = run_checks(check_context(config, dataset, config.run_id, earlier))
-    free_text = free_text_plan(
-        config, dataset.items, dataset.outputs, flagged_by_free_checks(gate_findings)
+    gate_ctx = check_context(config, dataset, config.run_id, earlier)
+    gate_findings, _ = run_checks(gate_ctx)
+    selection: dict[str, dict[str, int]] = {}
+    free_text = gated_plan(
+        config,
+        dataset.items,
+        dataset.outputs,
+        flagged_by_free_checks(gate_findings),
+        ctx=gate_ctx,
+        selection=selection,
     )
     plan = plan_run(config, dataset.items, dataset.outputs, free_text=free_text)
     guard = BudgetGuard(max_usd=config.budget.max_usd, confirm=config.budget.confirm)
@@ -1499,6 +1736,7 @@ def run(
         previous=earlier,
         free_text=free_text,
         stability=stability,
+        selection=selection,
     )
     append_index(
         out,
@@ -1516,6 +1754,23 @@ def run(
         },
     )
     return result
+
+
+def _replay_gate(
+    config: RunConfig, dataset: Dataset, run_id: str,
+    selection: dict[str, dict[str, int]] | None = None,
+) -> dict[str, tuple[tuple[str, ...], tuple[str, ...]]]:
+    """Recompute which rows the gate chose, for a re-analysis.
+
+    Deterministic from the data, so it lands on the same rows the original
+    run paid for — which is what lets the gate's own quality be recomputed
+    for free.
+    """
+    ctx = check_context(config, dataset, run_id)
+    return gated_plan(
+        config, dataset.items, dataset.outputs, flagged_by_free_checks(run_checks(ctx)[0]),
+        ctx=ctx, selection=selection,
+    )
 
 
 def analyse_run(directory: Path, *, stream: TextIO | None = None) -> RunResult:
@@ -1544,6 +1799,7 @@ def analyse_run(directory: Path, *, stream: TextIO | None = None) -> RunResult:
             where=str(stored),
         )
 
+    replayed: dict[str, dict[str, int]] = {}
     entries = [e for e in read_index(directory.parent) if e.get("distributions")]
     earlier: dict[str, Any] = next(
         (e for e in reversed(entries) if e.get("run_id") != directory.name), {}
@@ -1561,12 +1817,8 @@ def analyse_run(directory: Path, *, stream: TextIO | None = None) -> RunResult:
         collected=(),
         run_yml=Path(manifest["run_yml"]),
         previous=earlier,
-        free_text=free_text_plan(
-            config,
-            dataset.items,
-            dataset.outputs,
-            flagged_by_free_checks(run_checks(check_context(config, dataset, directory.name))[0]),
-        ),
+        free_text=_replay_gate(config, dataset, directory.name, replayed),
+        selection=replayed,
     )
 
 
@@ -1583,6 +1835,7 @@ def _analyse(
     previous: Mapping[str, Any] | None = None,
     free_text: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]] | None = None,
     stability: StabilityReport | None = None,
+    selection: Mapping[str, Mapping[str, int]] | None = None,
 ) -> RunResult:
     run_id = directory.name
     modes = detect_modes(config, dataset.labels)
@@ -1594,8 +1847,11 @@ def _analyse(
     panel_findings, panel = panel_analysis(config, dataset, verdicts, health)
     humans = against_humans(config, dataset, verdicts, modes)
     label_findings = human_findings(run_id, config, dataset)
-    claims = claim_findings(run_id, config, verdicts)
-    gate_quality = free_gate_quality(free_text or {}, claims)
+    claims = [
+        *claim_findings(run_id, config, verdicts),
+        *grounding_findings(run_id, verdicts),
+    ]
+    gate_quality = free_gate_quality(free_text or {}, claims, selection)
     stability_metrics = _stability_metrics(stability)
     findings = [
         *free_findings,
@@ -1623,9 +1879,17 @@ def _analyse(
         target_errors=gate2.target_errors,
     )
 
-    # A model with no published price produces no cost, not a zero. Reporting
+    # A model with no published price produces no cost, not a zero: reporting
     # $0.00 for a run against an unpriced judge would be a made-up number.
-    priced = plan is None or not plan.unpriced_models
+    #
+    # But only when this invocation actually called one. A run that collected
+    # nothing — every verdict a cache hit, or a re-analysis — spent nothing,
+    # whatever its judges would have cost had it asked them, and withholding
+    # that zero would be its own small lie.
+    unpriced = frozenset(plan.unpriced_models) if plan else frozenset()
+    priced = not unpriced or not any(
+        str(v.metadata.get("model", "")) in unpriced for v in collected
+    )
     spent = sum(
         f.cost_usd
         for f in findings

@@ -6,7 +6,7 @@
     GATE 2   Is the judge better than nothing?
              If it loses to a trivial baseline, you are paying for noise.
 
-A gate firing does **not** kill the run (DESIGN.md §10). It removes the
+A gate firing does **not** kill the run (DESIGN.md §11). It removes the
 numbers it invalidates and says which and why, so a run that is partly
 measurable reports the part that is. That is what ``Suppression`` is for: a
 guardrail names the metrics it poisons, and anything holding one of those
@@ -227,7 +227,11 @@ def gate_one(
 
 
 def build_target(
-    labels: Sequence[Label], outputs: Mapping[str, Output], fields: Sequence[str]
+    labels: Sequence[Label],
+    outputs: Mapping[str, Output],
+    fields: Sequence[str],
+    *,
+    rated: Sequence[str] = (),
 ) -> RankingTarget:
     """What "this item is wrong" means, from human labels alone.
 
@@ -239,20 +243,40 @@ def build_target(
     disagree would silently make the target depend on which of them was read
     last; adjudicating them is a different job and mode 2's business.
 
-    ``fields`` must name **assigned** fields only. A free-text field's labels
-    are defect ratings, not a gold value — comparing "made_up" against the
-    summary text would mark every row an error and quietly make this target
-    useless while looking fine.
+    The two groups of field are read in the two different ways their labels
+    mean, which is the whole of the care needed here.
+
+    ``fields`` names the fields a label is a gold **value** for — assigned
+    and copied. The output is wrong when it differs from the answer.
+
+    ``rated`` names free-text fields, whose labels are **defect ratings**
+    rather than answers. There is no single right summary, so the output is
+    wrong when the rater ticked any box other than "none". Comparing the box
+    name against the sentence instead would mark every row an error and make
+    the target useless while looking perfectly healthy — which is why these
+    are two parameters and not one.
+
+    Leaving free text out altogether, which is what this did first, has the
+    opposite failure: a project whose main field is free text could never
+    assemble a target at all, so Gate 2 refused to rank the one thing it was
+    there to rank.
     """
+    from .metrics.classification import RATED_CLEAN
+
     primary: dict[tuple[str, str], str] = {}
     for label in sorted(labels, key=lambda label: label.annotator):
         primary.setdefault((label.item_id, label.field), label.label)
 
     truth: dict[str, bool] = {}
     for (item_id, field_name), answer in primary.items():
-        if field_name not in fields or item_id not in outputs:
+        if item_id not in outputs:
             continue
-        wrong = str(outputs[item_id].get(field_name)) != answer
+        if field_name in rated:
+            wrong = answer != RATED_CLEAN
+        elif field_name in fields:
+            wrong = str(outputs[item_id].get(field_name)) != answer
+        else:
+            continue
         truth[item_id] = truth.get(item_id, False) or wrong
     return RankingTarget(truth=truth, source="human labels, first annotator")
 
@@ -384,10 +408,19 @@ def gate_two(
     has not been shown to beat anything.
     """
     settings = config.settings
-    assigned = tuple(
-        name for name, spec in config.schema.fields.items() if spec.kind.value == "assigned"
+    # Assigned and copied both have one right answer a label can be. A
+    # free-text label is a defect rating instead, so it counts towards the
+    # target when the rater ticked a box — not by comparing the box name
+    # against the sentence, which would mark every row an error.
+    gold_valued = tuple(
+        name
+        for name, spec in config.schema.fields.items()
+        if spec.kind.value in {"assigned", "copied"}
     )
-    target = build_target(labels, outputs, assigned)
+    rated = tuple(
+        name for name, spec in config.schema.fields.items() if spec.kind.value == "free_text"
+    )
+    target = build_target(labels, outputs, gold_valued, rated=rated)
 
     if not target.truth:
         return GateTwo(

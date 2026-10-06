@@ -4,7 +4,7 @@ Reads two finished run directories off disk and issues no model calls. What it
 shows: the metrics side by side, which labels moved, and which individual
 items got better or worse.
 
-**What it will not do is say which run is better.** DESIGN.md §13 defers the
+**What it will not do is say which run is better.** DESIGN.md §14 defers the
 significance test to v1 with a specific reason: most items tie in a real A/B,
 so three net wins over two hundred items is a coin flip, and quoting a win
 rate without a test is how underpowered changes get shipped. A comparison that

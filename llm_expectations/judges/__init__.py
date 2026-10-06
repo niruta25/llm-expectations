@@ -18,10 +18,11 @@ from .base import (
     Provider,
     ReplyOutcome,
 )
-from .prompts import ClaimSupportTask, LabelCorrectTask
+from .prompts import ClaimSupportTask, GroundednessTask, LabelCorrectTask
 
 __all__ = [
     "ClaimSupportTask",
+    "GroundednessTask",
     "Judge",
     "JudgeError",
     "JudgeReply",

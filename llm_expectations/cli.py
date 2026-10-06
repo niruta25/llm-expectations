@@ -126,13 +126,24 @@ def _without_confirmation(config: RunConfig) -> RunConfig:
 
 
 def _plan(args: argparse.Namespace) -> int:
+    from .checks.base import run_checks
     from .config import load_run
     from .plan import plan_run
-    from .run import load_dataset
+    from .run import check_context, flagged_by_free_checks, gated_plan, load_dataset
 
     config = load_run(args.config)
     dataset = load_dataset(config)
-    plan = plan_run(config, dataset.items, dataset.outputs)
+
+    # The free checks run here for the same reason they run first in `run`:
+    # on a free-text or copied field they decide which rows are worth paying
+    # for, so a plan that skipped them would quote a different corpus from
+    # the one the run bills for. They cost nothing and make no calls.
+    ctx = check_context(config, dataset, config.run_id)
+    findings, _ = run_checks(ctx)
+    gated = gated_plan(
+        config, dataset.items, dataset.outputs, flagged_by_free_checks(findings), ctx=ctx
+    )
+    plan = plan_run(config, dataset.items, dataset.outputs, free_text=gated)
     print("PLAN")
     for line in plan.lines():
         print(line)

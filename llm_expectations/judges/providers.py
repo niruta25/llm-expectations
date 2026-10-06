@@ -1,6 +1,6 @@
 """Reaching the three kinds of judge, over one transport.
 
-DESIGN.md §12 names httpx as the dependency for provider calls, and one
+DESIGN.md §13 names httpx as the dependency for provider calls, and one
 transport for all three providers is the point rather than an economy: this
 library's whole job is comparing judges to each other. Two SDKs behind two
 retry policies, two error taxonomies and two token-accounting paths would make

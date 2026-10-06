@@ -14,7 +14,7 @@ reaches them, and it is how you see *why* two judges split.
 say enough manufactures noise. It maps to unscored — never to "wrong".
 
 A fifth thing, which the design implies rather than states. A judge that
-rejects a label is asked which label it would assign instead. DESIGN.md §9
+rejects a label is asked which label it would assign instead. DESIGN.md §10
 promises fuzzy label *pairs* from panel disagreement with no human labels, and
 a yes/no verdict cannot produce a pair — the second half would have to be
 guessed from sibling structure, which is the unearned inference this library
@@ -34,14 +34,23 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from ..schema import FieldKind, FieldSpec
 from ..taxonomy import Taxonomy
 from ..types import ABSTAIN, Item, Output, Status
-from .base import JudgeRequest, ParsedReply, ReplyOutcome
+from .base import JudgeRequest, JudgeTask, ParsedReply, ReplyOutcome
 
-__all__ = ["CLAIM_TOKENS", "ClaimSupportTask", "LabelCorrectTask"]
+__all__ = [
+    "CLAIM_TOKENS",
+    "GATED_KINDS",
+    "JUDGEABLE",
+    "ClaimSupportTask",
+    "GroundednessTask",
+    "LabelCorrectTask",
+]
 
 _SYSTEM = """You are checking a label another system assigned to an item.
 Decide whether the label is correct.
@@ -329,3 +338,103 @@ def free_text_is_judgeable(output: Output, field: str) -> bool:
     """Is there anything here for a judge to ground?"""
     value = output.get(field)
     return isinstance(value, str) and bool(value.strip())
+
+
+_GROUNDED_SYSTEM = """You are checking a value another system extracted from a document.
+
+The value is supposed to have been read out of the document, not inferred or
+calculated. Decide two things:
+
+1. Is this value present in the document at all?
+2. Is it the value that belongs in this field, rather than a different number,
+   date or name that happens to appear nearby?
+
+A document often contains several plausible candidates. Picking the wrong one is
+the failure that matters here, and it looks exactly like success from outside.
+
+If the document does not say enough to tell which value belongs in the field,
+answer cannot_decide rather than guessing.
+
+Reply with one JSON object and nothing else:
+{{"correct": true | false | "cannot_decide",
+ "confidence": <0 to 1>,
+ "reason": "<one sentence>",
+ "instead": "<the value the document actually supports, only when correct is false>"}}"""
+
+_GROUNDED_USER = """DOCUMENT:
+{text}
+
+FIELD: {field}{described}
+EXTRACTED VALUE: {value}"""
+
+
+@dataclass(frozen=True, slots=True)
+class GroundednessTask:
+    """Is this the value the document supports for this field?
+
+    The free check can prove a value is *absent* — that one is invented, and
+    it costs nothing. What it cannot prove is that a value it *found* is the
+    right one: a document listing a subtotal, a shipping charge and a total
+    contains the number the model reported whichever of the three it meant.
+
+    That is the failure this judge exists for, and it is the one that looks
+    like success from outside. The reply carries ``instead`` for the same
+    reason the label judge does: a reviewer opening the row wants the value
+    the document actually supports, not only the news that this one is wrong.
+    """
+
+    check_id: str = "value_grounded"
+    max_tokens: int = 120
+    describe: str = ""
+
+    def build(
+        self, item: Item, output: Output, field: str, taxonomy: Taxonomy | None
+    ) -> JudgeRequest:
+        described = f" — {self.describe}" if self.describe else ""
+        return JudgeRequest(
+            system=_GROUNDED_SYSTEM.format(),
+            user=_GROUNDED_USER.format(
+                text=item.text, field=field, described=described, value=output.get(field)
+            ),
+            max_tokens=self.max_tokens,
+            temperature=0.0,
+        )
+
+    def parse(self, text: str) -> ParsedReply:
+        # The same shape as a label verdict: correct / incorrect /
+        # cannot_decide, with an alternative on a rejection. Reusing the
+        # parser keeps one definition of what an unreadable reply is.
+        return LabelCorrectTask().parse(text)
+
+
+def copied_is_judgeable(output: Output, field: str) -> bool:
+    """Is there a value here for a judge to ground?"""
+    value = output.get(field)
+    return value is not None and str(value).strip() != ""
+
+
+#: The kinds whose free checks are predictive enough to decide what gets paid
+#: for, and how to ask a judge about one. A fourth kind of field is a row
+#: here, not an edit to the collector or to the cost estimate — which is what
+#: the seam in DESIGN.md §4 is supposed to buy.
+#:
+#: ``assigned`` is deliberately absent. Its free checks catch format problems
+#: only, so a well-formed wrong label passes every one of them and the triage
+#: judge has to see everything.
+#:
+#: It lives beside the tasks rather than beside the collector so that
+#: ``plan`` and ``run`` build the same request from the same table. A plan
+#: that guessed at the task would be costing a call nobody is going to make.
+GATED_KINDS: Mapping[FieldKind, Callable[[FieldSpec, int], JudgeTask]] = {
+    FieldKind.FREE_TEXT: lambda spec, max_tokens: ClaimSupportTask(
+        style=spec.style.value if spec.style else "descriptive",
+        max_tokens=max(max_tokens, CLAIM_TOKENS),
+    ),
+    FieldKind.COPIED: lambda spec, max_tokens: GroundednessTask(),
+}
+
+#: Whether a row of that kind holds anything a judge could be asked about.
+JUDGEABLE: Mapping[FieldKind, Callable[[Output, str], bool]] = {
+    FieldKind.FREE_TEXT: free_text_is_judgeable,
+    FieldKind.COPIED: copied_is_judgeable,
+}

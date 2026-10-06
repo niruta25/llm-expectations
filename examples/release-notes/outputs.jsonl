@@ -1,0 +1,260 @@
+{"item_id": "pr-001", "area": "reports", "note": "You can compare two periods with the revenue chart now. It is opt-in, so nothing changes until you ask for it. It is also about three times faster for everyone.", "confidence": 0.85}
+{"item_id": "pr-002", "area": "billing", "note": "Housekeeping in the tax resolver — a dependency upgrade, with no change you can see from outside.", "confidence": 0.96}
+{"item_id": "pr-003", "area": "api", "note": "We cut the token exchange from around 7s to around 2s on out-of-order retries.", "confidence": 0.84}
+{"item_id": "pr-004", "area": "mobile", "note": "Reduces work in the sync indicator by caching a stale read from the replica between calls. On the 7.10 fixture this takes it from 36s to 9s when the photo is larger than 20 MB.", "confidence": 0.88}
+{"item_id": "pr-005", "area": "admin", "note": "New in the role editor: copy a role. Turn it on in your account settings whenever you are ready.", "confidence": 0.99}
+{"item_id": "pr-006", "area": "importer", "note": "The staging queue no longer garbles accents on duplicated headers.", "confidence": 0.84}
+{"item_id": "pr-007", "area": "reports", "note": "The usage report grew a way to filter by tag in place, so there is no second screen to visit.", "confidence": 0.91}
+{"item_id": "pr-008", "area": "billing", "note": "Behind-the-scenes upgrade to the dunning job. You should not notice any difference in how it works. This closes a security issue reported by an external researcher.", "confidence": 0.86}
+{"item_id": "pr-009", "area": "api", "note": "The webhook signer grew a way to page backwards in place, so there is no second screen to visit.", "confidence": 0.85}
+{"item_id": "pr-010", "area": "mobile", "note": "You can work offline for a day with the offline cache now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.75}
+{"item_id": "pr-011", "area": "admin", "note": "Fixed a regression in the invite flow affecting simultaneous edits, introduced back in 6.3.", "confidence": 0.79}
+{"item_id": "pr-012", "area": "importer", "note": "We fixed the CSV reader, which skips rows whenever you had a blank first line.", "confidence": 0.9}
+{"item_id": "pr-013", "area": "reports", "note": "The export scheduler grew a way to compare two periods in place, so there is no second screen to visit.", "confidence": 0.8}
+{"item_id": "pr-014", "area": "billing", "note": "You can split a charge with the invoice renderer now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.77}
+{"item_id": "pr-015", "area": "api", "note": "We upgraded some internals behind the bulk writer. Nothing you do with it should change.", "confidence": 0.8}
+{"item_id": "pr-016", "area": "mobile", "note": "You can work offline for a day straight from the push registration now, without a round trip through another screen.", "confidence": 0.96}
+{"item_id": "pr-017", "area": "admin", "note": "On older policies, the role editor would sometimes doubles up invitations. It does not any more.", "confidence": 0.74}
+{"item_id": "pr-018", "area": "importer", "note": "New in the encoding sniffer: retry a single row. Turn it on in your account settings whenever you are ready.", "confidence": 0.85}
+{"item_id": "pr-019", "area": "reports", "note": "General stability work across the product, with no change to how anything looks.", "confidence": 0.96}
+{"item_id": "pr-020", "area": "billing", "note": "The invoice renderer is quicker on mid-cycle plan changes — roughly 13s down to 6s against our own test data.", "confidence": 0.75}
+{"item_id": "pr-021", "area": "api", "note": "A 5.3 regression in the records endpoint is fixed: uncursored requests work the way they used to.", "confidence": 0.8}
+{"item_id": "pr-022", "area": "mobile", "note": "The session restore grew a way to switch accounts in place, so there is no second screen to visit.", "confidence": 0.78}
+{"item_id": "pr-023", "area": "admin", "note": "We cut the SSO settings from around 38s to around 12s on nested groups.", "confidence": 0.94}
+{"item_id": "pr-024", "area": "importer", "note": "Fixed the staging queue.", "confidence": 0.85}
+{"item_id": "pr-025", "area": "reports", "note": "Fixed the saved view.", "confidence": 0.79}
+{"item_id": "pr-026", "area": "billing", "note": "We cut the seat counter from around 24s to around 4s on accounts emptied of seats.", "confidence": 0.77}
+{"item_id": "pr-027", "area": "api", "note": "This release includes several small enhancements and a handful of corrections.", "confidence": 0.85}
+{"item_id": "pr-028", "area": "mobile", "note": "New in the deep link handler: switch accounts. Turn it on in your account settings whenever you are ready. The old behaviour has been removed for every customer today.", "confidence": 0.86}
+{"item_id": "pr-029", "area": "admin", "note": "You can require two-factor per group straight from the SSO settings now, without a round trip through another screen.", "confidence": 0.87}
+{"item_id": "pr-030", "area": "importer", "note": "A 5.9 regression in the staging queue is fixed: duplicated headers work the way they used to.", "confidence": 0.81}
+{"item_id": "pr-031", "area": "reports", "note": "Several long-standing issues have been addressed in this update.", "confidence": 0.82}
+{"item_id": "pr-032", "area": "billing", "note": "Fixed a regression in the invoice renderer affecting multi-currency accounts, introduced back in 6.11.", "confidence": 0.91}
+{"item_id": "pr-033", "area": "api", "note": "a token refresh got faster in the rate limiter: about 34s before, about 6s now, on our measurements. There is no longer any upper limit on the number of rows.", "confidence": 0.79}
+{"item_id": "pr-034", "area": "mobile", "note": "We cut the deep link handler from around 8s to around 2s on very large photos. It settles the long-standing complaint about how this is priced.", "confidence": 0.94}
+{"item_id": "pr-035", "area": "admin", "note": "We fixed the SSO settings, which misses an entry whenever you had older policies.", "confidence": 0.99}
+{"item_id": "pr-036", "area": "importer", "note": "The staging queue can now retry a single row. It stays off until you switch it on in your account settings.", "confidence": 0.88}
+{"item_id": "pr-037", "area": "reports", "note": "We cut the revenue chart from around 6s to around 1s on multi-currency accounts.", "confidence": 0.69}
+{"item_id": "pr-038", "area": "billing", "note": "New in the invoice renderer: set a billing contact. Turn it on in your account settings whenever you are ready.", "confidence": 0.88}
+{"item_id": "pr-039", "area": "api", "note": "You can replay a failed delivery with the rate limiter now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.99}
+{"item_id": "pr-040", "area": "mobile", "note": "A 7.4 regression in the sync indicator is fixed: simultaneous edits work the way they used to.", "confidence": 0.87}
+{"item_id": "pr-041", "area": "admin", "note": "A 6.10 regression in the audit log is fixed: nested groups work the way they used to.", "confidence": 0.91}
+{"item_id": "pr-042", "area": "importer", "note": "Behind-the-scenes upgrade to the CSV reader. You should not notice any difference in how it works.", "confidence": 0.74}
+{"item_id": "pr-043", "area": "reports", "note": "We cut the export scheduler from around 17s to around 8s on multi-currency accounts.", "confidence": 0.83}
+{"item_id": "pr-044", "area": "billing", "note": "A 3.0 regression in the credit note flow is fixed: mid-cycle plan changes work the way they used to.", "confidence": 0.74}
+{"item_id": "pr-045", "area": "api", "note": "No more hopping between screens: replay a failed delivery right there in the records endpoint.", "confidence": 0.87}
+{"item_id": "pr-046", "area": "mobile", "note": "You can work offline for a day with the session restore now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.99}
+{"item_id": "pr-047", "area": "admin", "note": "This release includes several small enhancements and a handful of corrections.", "confidence": 0.94}
+{"item_id": "pr-048", "area": "importer", "note": "We fixed the column mapper, which stops early whenever you had very large files.", "confidence": 0.82}
+{"item_id": "pr-049", "area": "reports", "note": "The usage report no longer re-sorts itself on ranges spanning two months.", "confidence": 0.87}
+{"item_id": "pr-050", "area": "billing", "note": "You can download a year at once with the invoice renderer now. It is opt-in, so nothing changes until you ask for it. The old behaviour has been removed for every customer today.", "confidence": 0.83}
+{"item_id": "pr-051", "area": "api", "note": "The records endpoint is quicker on a token refresh — roughly 17s down to 4s against our own test data.", "confidence": 0.93}
+{"item_id": "pr-052", "area": "mobile", "note": "We fixed the push registration, which hangs mid-sync whenever you had very large photos.", "confidence": 0.82}
+{"item_id": "pr-053", "area": "admin", "note": "A 4.9 regression in the retention policy is fixed: nested groups work the way they used to.", "confidence": 0.93}
+{"item_id": "pr-054", "area": "importer", "note": "On very large files, the staging queue would sometimes skips rows. It does not any more.", "confidence": 0.9}
+{"item_id": "pr-055", "area": "reports", "note": "No more hopping between screens: filter by tag right there in the revenue chart.", "confidence": 0.85}
+{"item_id": "pr-056", "area": "billing", "note": "We cut the credit note flow from around 28s to around 7s on multi-currency accounts.", "confidence": 0.96}
+{"item_id": "pr-057", "area": "api", "note": "Fixed a regression in the records endpoint affecting a token refresh, introduced back in 4.1.", "confidence": 0.92}
+{"item_id": "pr-058", "area": "mobile", "note": "Fixes an issue where the offline cache would lose unsent changes when the device is offline. Root cause was a rounding step in the wrong order. Added a regression test covering the device is offline.", "confidence": 0.81}
+{"item_id": "pr-059", "area": "admin", "note": "The bulk deactivate can now require two-factor per group. It stays off until you switch it on in your account settings.", "confidence": 0.9}
+{"item_id": "pr-060", "area": "importer", "note": "The CSV reader has behaved oddly with a blank first line since 4.2. That is now back to normal.", "confidence": 0.73}
+{"item_id": "pr-061", "area": "reports", "note": "The usage report no longer comes back blank on shared views.", "confidence": 0.85}
+{"item_id": "pr-062", "area": "billing", "note": "We upgraded some internals behind the proration engine. Nothing you do with it should change.", "confidence": 0.88}
+{"item_id": "pr-063", "area": "api", "note": "The token exchange grew a way to ask for fewer fields in place, so there is no second screen to visit.", "confidence": 0.95}
+{"item_id": "pr-064", "area": "mobile", "note": "New in the offline cache: switch accounts. Turn it on in your account settings whenever you are ready.", "confidence": 0.77}
+{"item_id": "pr-065", "area": "admin", "note": "No more hopping between screens: copy a role right there in the invite flow.", "confidence": 0.99}
+{"item_id": "pr-066", "area": "importer", "note": "Several long-standing issues have been addressed in this update.", "confidence": 0.99}
+{"item_id": "pr-067", "area": "reports", "note": "You can schedule a monthly send with the pivot builder now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.95}
+{"item_id": "pr-068", "area": "billing", "note": "New in the tax resolver: split a charge. Turn it on in your account settings whenever you are ready.", "confidence": 0.9}
+{"item_id": "pr-069", "area": "api", "note": "This release includes several small enhancements and a handful of corrections.", "confidence": 0.96}
+{"item_id": "pr-070", "area": "mobile", "note": "We cut the sync indicator from around 27s to around 5s on patchy connections.", "confidence": 0.78}
+{"item_id": "pr-071", "area": "admin", "note": "We upgraded some internals behind the audit log. Nothing you do with it should change.", "confidence": 0.99}
+{"item_id": "pr-072", "area": "importer", "note": "Various improvements and bug fixes have landed in this part of the product.", "confidence": 0.96}
+{"item_id": "pr-073", "area": "reports", "note": "The usage report is quicker on multi-currency accounts — roughly 4s down to 1s against our own test data.", "confidence": 0.85}
+{"item_id": "pr-074", "area": "importer", "note": "You can set a billing contact straight from the seat counter now, without a round trip through another screen.", "confidence": 0.83}
+{"item_id": "pr-075", "area": "api", "note": "Fixed a regression in the pagination cursor affecting a token refresh, introduced back in 8.2.", "confidence": 0.77}
+{"item_id": "pr-076", "area": "importer", "note": "We upgraded some internals behind the session restore. Nothing you do with it should change.", "confidence": 0.83}
+{"item_id": "pr-077", "area": "admin", "note": "You can copy a role straight from the role editor now, without a round trip through another screen.", "confidence": 0.86}
+{"item_id": "pr-078", "area": "importer", "note": "a blank first line got faster in the column mapper: about 25s before, about 6s now, on our measurements.", "confidence": 0.85}
+{"item_id": "pr-079", "area": "reports", "note": "You can pin a view straight from the revenue chart now, without a round trip through another screen.", "confidence": 0.92}
+{"item_id": "pr-080", "area": "billing", "note": "We cut the seat counter from around 7s to around 1s on same-day credit notes.", "confidence": 0.83}
+{"item_id": "pr-081", "area": "api", "note": "Behind-the-scenes upgrade to the records endpoint. You should not notice any difference in how it works.", "confidence": 0.83}
+{"item_id": "pr-082", "area": "mobile", "note": "A 8.5 regression in the photo uploader is fixed: very large photos work the way they used to.", "confidence": 0.93}
+{"item_id": "pr-083", "area": "admin", "note": "The audit log can now copy a role. It stays off until you switch it on in your account settings. The old behaviour has been removed for every customer today.", "confidence": 0.94}
+{"item_id": "pr-084", "area": "mobile", "note": "We upgraded some internals behind the encoding sniffer. Nothing you do with it should change.", "confidence": 0.85}
+{"item_id": "pr-085", "area": "reports", "note": "Fixed the revenue chart.", "confidence": 0.91}
+{"item_id": "pr-086", "area": "billing", "note": "We upgraded some internals behind the seat counter. Nothing you do with it should change.", "confidence": 0.9}
+{"item_id": "pr-087", "area": "api", "note": "The webhook signer can now ask for fewer fields. It stays off until you switch it on in your account settings.", "confidence": 0.82}
+{"item_id": "pr-088", "area": "mobile", "note": "You can scan a barcode straight from the sync indicator now, without a round trip through another screen.", "confidence": 0.84}
+{"item_id": "pr-089", "area": "admin", "note": "You can require two-factor per group with the retention policy now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.61}
+{"item_id": "pr-090", "area": "importer", "note": "Behind-the-scenes upgrade to the CSV reader. You should not notice any difference in how it works. This closes a security issue reported by an external researcher.", "confidence": 0.87}
+{"item_id": "pr-091", "area": "reports", "note": "Housekeeping in the usage report — a dependency upgrade, with no change you can see from outside. It is also about three times faster for everyone.", "confidence": 0.95}
+{"item_id": "pr-092", "area": "billing", "note": "This release includes several small enhancements and a handful of corrections.", "confidence": 0.91}
+{"item_id": "pr-093", "area": "api", "note": "No more hopping between screens: replay a failed delivery right there in the records endpoint.", "confidence": 0.9}
+{"item_id": "pr-094", "area": "mobile", "note": "Housekeeping in the deep link handler — a dependency upgrade, with no change you can see from outside.", "confidence": 0.9}
+{"item_id": "pr-095", "area": "admin", "note": "New in the bulk deactivate: schedule a deactivation. Turn it on in your account settings whenever you are ready. It is also about three times faster for everyone.", "confidence": 0.8}
+{"item_id": "pr-096", "area": "importer", "note": "On a blank first line, the staging queue would sometimes skips rows. It does not any more.", "confidence": 0.92}
+{"item_id": "pr-097", "area": "reports", "note": "The saved view can now pin a view. It stays off until you switch it on in your account settings.", "confidence": 0.86}
+{"item_id": "pr-098", "area": "billing", "note": "You can search by invoice number with the dunning job now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.88}
+{"item_id": "pr-099", "area": "api", "note": "We fixed the token exchange, which duplicates events whenever you had out-of-order retries.", "confidence": 0.96}
+{"item_id": "pr-100", "area": "mobile", "note": "We fixed the sync indicator, which hangs mid-sync whenever you had an interrupted sync.", "confidence": 0.84}
+{"item_id": "pr-101", "area": "admin", "note": "You can schedule a deactivation with the SSO settings now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.93}
+{"item_id": "pr-102", "area": "importer", "note": "Fixed a regression in the staging queue affecting a blank first line, introduced back in 3.10.", "confidence": 0.86}
+{"item_id": "pr-103", "area": "reports", "note": "The pivot builder can now filter by tag. It stays off until you switch it on in your account settings.", "confidence": 0.89}
+{"item_id": "pr-104", "area": "billing", "note": "mid-cycle plan changes got faster in the seat counter: about 6s before, about 1s now, on our measurements.", "confidence": 0.65}
+{"item_id": "pr-105", "area": "api", "note": "A 6.11 regression in the token exchange is fixed: large bulk writes work the way they used to.", "confidence": 0.97}
+{"item_id": "pr-106", "area": "mobile", "note": "Fixed the push registration.", "confidence": 0.9}
+{"item_id": "pr-107", "area": "admin", "note": "We fixed the audit log, which keeps data too long whenever you had nested groups.", "confidence": 0.7}
+{"item_id": "pr-108", "area": "importer", "note": "Behind-the-scenes upgrade to the staging queue. You should not notice any difference in how it works.", "confidence": 0.85}
+{"item_id": "pr-109", "area": "reports", "note": "multi-currency accounts got faster in the usage report: about 25s before, about 12s now, on our measurements.", "confidence": 0.84}
+{"item_id": "pr-110", "area": "billing", "note": "New in the seat counter: download a year at once. Turn it on in your account settings whenever you are ready.", "confidence": 0.99}
+{"item_id": "pr-111", "area": "api", "note": "large bulk writes got faster in the pagination cursor: about 20s before, about 6s now, on our measurements.", "confidence": 0.85}
+{"item_id": "pr-112", "area": "mobile", "note": "No more hopping between screens: scan a barcode right there in the push registration.", "confidence": 0.9}
+{"item_id": "pr-113", "area": "admin", "note": "We made a number of updates to make things more reliable and a little faster.", "confidence": 0.79}
+{"item_id": "pr-114", "area": "importer", "note": "Extends the encoding sniffer so you can preview the first hundred rows before committing without leaving the page. Touches 13 files; the underlying a stale read from the replica is unchanged.", "confidence": 0.86}
+{"item_id": "pr-115", "area": "reports", "note": "We fixed the export scheduler, which rounds badly whenever you had empty filters.", "confidence": 0.79}
+{"item_id": "pr-116", "area": "billing", "note": "Fixed a regression in the dunning job affecting mid-cycle plan changes, introduced back in 6.10.", "confidence": 0.84}
+{"item_id": "pr-117", "area": "api", "note": "The rate limiter can now ask for fewer fields. It stays off until you switch it on in your account settings.", "confidence": 0.86}
+{"item_id": "pr-118", "area": "mobile", "note": "New in the push registration: keep a draft locally. Turn it on in your account settings whenever you are ready.", "confidence": 0.75}
+{"item_id": "pr-119", "area": "admin", "note": "The bulk deactivate has behaved oddly with simultaneous edits since 3.4. That is now back to normal.", "confidence": 0.94}
+{"item_id": "pr-120", "area": "importer", "note": "very large files got faster in the encoding sniffer: about 20s before, about 5s now, on our measurements.", "confidence": 0.86}
+{"item_id": "pr-121", "area": "reports", "note": "This release includes several small enhancements and a handful of corrections.", "confidence": 0.89}
+{"item_id": "pr-122", "area": "billing", "note": "You can search by invoice number straight from the credit note flow now, without a round trip through another screen.", "confidence": 0.8}
+{"item_id": "pr-123", "area": "api", "note": "The records endpoint grew a way to scope a token in place, so there is no second screen to visit.", "confidence": 0.81}
+{"item_id": "pr-124", "area": "api", "note": "You can switch accounts straight from the push registration now, without a round trip through another screen.", "confidence": 0.98}
+{"item_id": "pr-125", "area": "admin", "note": "people who never signed in got faster in the invite flow: about 29s before, about 14s now, on our measurements.", "confidence": 0.81}
+{"item_id": "pr-126", "area": "importer", "note": "The staging queue grew a way to preview before committing in place, so there is no second screen to visit.", "confidence": 0.99}
+{"item_id": "pr-127", "area": "reports", "note": "The date-range picker can now compare two periods. It stays off until you switch it on in your account settings.", "confidence": 0.74}
+{"item_id": "pr-128", "area": "billing", "note": "A 4.10 regression in the seat counter is fixed: mid-cycle plan changes work the way they used to.", "confidence": 0.9}
+{"item_id": "pr-129", "area": "api", "note": "You can ask for fewer fields with the pagination cursor now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.84}
+{"item_id": "pr-130", "area": "mobile", "note": "We upgraded some internals behind the deep link handler. Nothing you do with it should change.", "confidence": 0.84}
+{"item_id": "pr-131", "area": "admin", "note": "You can schedule a deactivation straight from the SSO settings now, without a round trip through another screen.", "confidence": 0.92}
+{"item_id": "pr-132", "area": "importer", "note": "We fixed the row validator, which refuses a whole file whenever you had very large files.", "confidence": 0.88}
+{"item_id": "pr-133", "area": "reports", "note": "Fixed a regression in the revenue chart affecting shared views, introduced back in 3.0.", "confidence": 0.88}
+{"item_id": "pr-134", "area": "billing", "note": "Fixed a regression in the proration engine affecting mid-cycle plan changes, introduced back in 5.4.", "confidence": 0.95}
+{"item_id": "pr-135", "area": "api", "note": "Fixed the pagination cursor.", "confidence": 0.9}
+{"item_id": "pr-136", "area": "mobile", "note": "We made a number of updates to make things more reliable and a little faster.", "confidence": 0.89}
+{"item_id": "pr-137", "area": "admin", "note": "On people who never signed in, the SSO settings would sometimes keeps data too long. It does not any more.", "confidence": 0.93}
+{"item_id": "pr-138", "area": "importer", "note": "The duplicate detector no longer stops early on duplicated headers.", "confidence": 0.99}
+{"item_id": "pr-139", "area": "reports", "note": "General stability work across the product, with no change to how anything looks.", "confidence": 0.9}
+{"item_id": "pr-140", "area": "billing", "note": "A 5.10 regression in the tax resolver is fixed: mid-cycle plan changes work the way they used to.", "confidence": 0.92}
+{"item_id": "pr-141", "area": "api", "note": "uncursored requests got faster in the rate limiter: about 8s before, about 2s now, on our measurements.", "confidence": 0.74}
+{"item_id": "pr-142", "area": "mobile", "note": "Fixed a regression in the push registration affecting patchy connections, introduced back in 8.1.", "confidence": 0.88}
+{"item_id": "pr-143", "area": "admin", "note": "New in the retention policy: require two-factor per group. Turn it on in your account settings whenever you are ready.", "confidence": 0.86}
+{"item_id": "pr-144", "area": "importer", "note": "Fixed a regression in the column mapper affecting unusual encodings, introduced back in 7.2. There is no longer any upper limit on the number of rows.", "confidence": 0.87}
+{"item_id": "pr-145", "area": "reports", "note": "Housekeeping in the saved view — a dependency upgrade, with no change you can see from outside.", "confidence": 0.86}
+{"item_id": "pr-146", "area": "billing", "note": "Extends the tax resolver so you can search invoices by their number without leaving the page. Touches 32 files; the underlying an unescaped delimiter is unchanged.", "confidence": 0.84}
+{"item_id": "pr-147", "area": "billing", "note": "The rate limiter can now page backwards. It stays off until you switch it on in your account settings.", "confidence": 0.83}
+{"item_id": "pr-148", "area": "mobile", "note": "Fixed a regression in the offline cache affecting patchy connections, introduced back in 7.9.", "confidence": 0.88}
+{"item_id": "pr-149", "area": "admin", "note": "Housekeeping in the invite flow — a dependency upgrade, with no change you can see from outside.", "confidence": 0.84}
+{"item_id": "pr-150", "area": "importer", "note": "Upgrades the column mapper to drop a deprecated dependency. No behaviour change intended; 15 files touched, all internal. Housekeeping in the column mapper — a dependency upgrade, with no change you can see from outside. Upgrades the column mapper to drop a deprecated dependency. No behaviour change intended; 15 files touched, all internal. Housekeeping in the column mapper — a dependency upgrade, with no change you can see from outside. Upgrades the column mapper to drop a deprecated dependency. No behaviour change intended; 15 files touched, all internal. Housekeeping in the column mapper — a dependency upgrade, with no change you can see from outside.", "confidence": 0.95}
+{"item_id": "pr-151", "area": "reports", "note": "ranges spanning two months got faster in the date-range picker: about 34s before, about 6s now, on our measurements.", "confidence": 0.8}
+{"item_id": "pr-152", "area": "billing", "note": "No more hopping between screens: split a charge right there in the invoice renderer.", "confidence": 0.78}
+{"item_id": "pr-153", "area": "api", "note": "We upgraded some internals behind the bulk writer. Nothing you do with it should change.", "confidence": 0.75}
+{"item_id": "pr-154", "area": "mobile", "note": "The deep link handler can now switch accounts. It stays off until you switch it on in your account settings.", "confidence": 0.84}
+{"item_id": "pr-155", "area": "admin", "note": "We upgraded some internals behind the SSO settings. Nothing you do with it should change. The old behaviour has been removed for every customer today.", "confidence": 0.77}
+{"item_id": "pr-156", "area": "importer", "note": "No more hopping between screens: undo an import right there in the CSV reader.", "confidence": 0.77}
+{"item_id": "pr-157", "area": "reports", "note": "shared views got faster in the revenue chart: about 30s before, about 7s now, on our measurements.", "confidence": 0.91}
+{"item_id": "pr-158", "area": "reports", "note": "A 5.8 regression in the invoice renderer is fixed: accounts emptied of seats work the way they used to.", "confidence": 0.99}
+{"item_id": "pr-159", "area": "api", "note": "The webhook signer grew a way to replay a failed delivery in place, so there is no second screen to visit.", "confidence": 0.79}
+{"item_id": "pr-160", "area": "mobile", "note": "Extends the photo uploader so you can work offline for a full day before syncing without leaving the page. Touches 18 files; the underlying a timezone applied twice is unchanged.", "confidence": 0.77}
+{"item_id": "pr-161", "area": "admin", "note": "Since the 7.2 release the bulk deactivate would send the invite twice whenever two administrators edit at once. This restores the previous behaviour and leaves the a stale read from the replica path alone. Fixed a regression in the bulk deactivate affecting simultaneous edits, introduced back in 7.2. Since the 7.2 release the bulk deactivate would send the invite twice whenever two administrators edit at once. This restores the previous behaviour and leaves the a stale read from the replica path alone. Fixed a regression in the bulk deactivate affecting simultaneous edits, introduced back in 7.2. Since the 7.2 release the bulk deactivate would send the invite twice whenever two administrators edit at once. This restores the previous behaviour and leaves the a stale read from the replica path alone. Fixed a regression in the bulk deactivate affecting simultaneous edits, introduced back in 7.2.", "confidence": 0.93}
+{"item_id": "pr-162", "area": "importer", "note": "A 6.7 regression in the staging queue is fixed: duplicated headers work the way they used to.", "confidence": 0.75}
+{"item_id": "pr-163", "area": "reports", "note": "Behind-the-scenes upgrade to the saved view. You should not notice any difference in how it works.", "confidence": 0.86}
+{"item_id": "pr-164", "area": "billing", "note": "Behind-the-scenes upgrade to the invoice renderer. You should not notice any difference in how it works.", "confidence": 0.91}
+{"item_id": "pr-165", "area": "api", "note": "The bulk writer is quicker on a token refresh — roughly 34s down to 11s against our own test data.", "confidence": 0.96}
+{"item_id": "pr-166", "area": "mobile", "note": "We cut the push registration from around 38s to around 19s on an interrupted sync.", "confidence": 0.95}
+{"item_id": "pr-167", "area": "admin", "note": "Upgrades the bulk deactivate to drop a deprecated dependency. No behaviour change intended; 39 files touched, all internal. Behind-the-scenes upgrade to the bulk deactivate. You should not notice any difference in how it works. Upgrades the bulk deactivate to drop a deprecated dependency. No behaviour change intended; 39 files touched, all internal. Behind-the-scenes upgrade to the bulk deactivate. You should not notice any difference in how it works. Upgrades the bulk deactivate to drop a deprecated dependency. No behaviour change intended; 39 files touched, all internal. Behind-the-scenes upgrade to the bulk deactivate. You should not notice any difference in how it works.", "confidence": 0.85}
+{"item_id": "pr-168", "area": "importer", "note": "We upgraded some internals behind the row validator. Nothing you do with it should change. The row validator is now certified against the new audit requirements.", "confidence": 0.89}
+{"item_id": "pr-169", "area": "reports", "note": "We cut the saved view from around 16s to around 3s on ranges spanning two months. The old behaviour has been removed for every customer today.", "confidence": 0.89}
+{"item_id": "pr-170", "area": "billing", "note": "Housekeeping in the proration engine — a dependency upgrade, with no change you can see from outside.", "confidence": 0.79}
+{"item_id": "pr-171", "area": "api", "note": "The records endpoint has behaved oddly with out-of-order retries since 6.2. That is now back to normal.", "confidence": 0.87}
+{"item_id": "pr-172", "area": "mobile", "note": "You can scan a barcode with the push registration now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.8}
+{"item_id": "pr-173", "area": "admin", "note": "You can require two-factor per group with the bulk deactivate now. It is opt-in, so nothing changes until you ask for it. The old behaviour has been removed for every customer today.", "confidence": 0.99}
+{"item_id": "pr-174", "area": "importer", "note": "Fixed a regression in the duplicate detector affecting duplicated headers, introduced back in 4.2.", "confidence": 0.9}
+{"item_id": "pr-175", "area": "reports", "note": "We fixed the usage report, which comes back blank whenever you had empty filters.", "confidence": 0.89}
+{"item_id": "pr-176", "area": "billing", "note": "Housekeeping in the credit note flow — a dependency upgrade, with no change you can see from outside.", "confidence": 0.9}
+{"item_id": "pr-177", "area": "api", "note": "The token exchange is quicker on large bulk writes — roughly 37s down to 12s against our own test data.", "confidence": 0.91}
+{"item_id": "pr-178", "area": "mobile", "note": "No more hopping between screens: scan a barcode right there in the photo uploader.", "confidence": 0.76}
+{"item_id": "pr-179", "area": "admin", "note": "We cut the retention policy from around 30s to around 6s on nested groups.", "confidence": 0.77}
+{"item_id": "pr-180", "area": "importer", "note": "The staging queue grew a way to preview before committing in place, so there is no second screen to visit.", "confidence": 0.98}
+{"item_id": "pr-181", "area": "reports", "note": "The export scheduler has behaved oddly with shared views since 4.0. That is now back to normal.", "confidence": 0.81}
+{"item_id": "pr-182", "area": "billing", "note": "The dunning job grew a way to split a charge in place, so there is no second screen to visit.", "confidence": 0.82}
+{"item_id": "pr-183", "area": "api", "note": "The rate limiter can now replay a failed delivery. It stays off until you switch it on in your account settings.", "confidence": 0.77}
+{"item_id": "pr-184", "area": "mobile", "note": "The sync indicator is quicker on patchy connections — roughly 26s down to 13s against our own test data.", "confidence": 0.87}
+{"item_id": "pr-185", "area": "admin", "note": "We made a number of updates to make things more reliable and a little faster.", "confidence": 0.84}
+{"item_id": "pr-186", "area": "importer", "note": "The CSV reader has behaved oddly with duplicated headers since 6.8. That is now back to normal.", "confidence": 0.83}
+{"item_id": "pr-187", "area": "reports", "note": "Behind-the-scenes upgrade to the usage report. You should not notice any difference in how it works.", "confidence": 0.94}
+{"item_id": "pr-188", "area": "billing", "note": "The invoice renderer can now download a year at once. It stays off until you switch it on in your account settings.", "confidence": 0.81}
+{"item_id": "pr-189", "area": "api", "note": "Behind-the-scenes upgrade to the rate limiter. You should not notice any difference in how it works.", "confidence": 0.87}
+{"item_id": "pr-190", "area": "mobile", "note": "We upgraded some internals behind the deep link handler. Nothing you do with it should change. The old behaviour has been removed for every customer today.", "confidence": 0.99}
+{"item_id": "pr-191", "area": "admin", "note": "New in the bulk deactivate: copy a role. Turn it on in your account settings whenever you are ready.", "confidence": 0.91}
+{"item_id": "pr-192", "area": "importer", "note": "We cut the duplicate detector from around 30s to around 15s on unusual encodings.", "confidence": 0.71}
+{"item_id": "pr-193", "area": "admin", "note": "You can compare two periods straight from the revenue chart now, without a round trip through another screen.", "confidence": 0.94}
+{"item_id": "pr-194", "area": "billing", "note": "The proration engine is quicker on accounts emptied of seats — roughly 26s down to 13s against our own test data.", "confidence": 0.7}
+{"item_id": "pr-195", "area": "api", "note": "New in the pagination cursor: replay a failed delivery. Turn it on in your account settings whenever you are ready.", "confidence": 0.69}
+{"item_id": "pr-196", "area": "mobile", "note": "Fixed a regression in the sync indicator affecting an interrupted sync, introduced back in 8.9.", "confidence": 0.82}
+{"item_id": "pr-197", "area": "admin", "note": "Housekeeping in the audit log — a dependency upgrade, with no change you can see from outside.", "confidence": 0.94}
+{"item_id": "pr-198", "area": "importer", "note": "A 4.3 regression in the row validator is fixed: very large files work the way they used to.", "confidence": 0.9}
+{"item_id": "pr-199", "area": "reports", "note": "Behind-the-scenes upgrade to the pivot builder. You should not notice any difference in how it works.", "confidence": 0.88}
+{"item_id": "pr-200", "area": "billing", "note": "A 6.11 regression in the credit note flow is fixed: accounts emptied of seats work the way they used to.", "confidence": 0.7}
+{"item_id": "pr-201", "area": "api", "note": "We cut the records endpoint from around 29s to around 14s on a token refresh.", "confidence": 0.85}
+{"item_id": "pr-202", "area": "mobile", "note": "We fixed the sync indicator, which hangs mid-sync whenever you had simultaneous edits.", "confidence": 0.76}
+{"item_id": "pr-203", "area": "admin", "note": "We cut the role editor from around 36s to around 18s on people who never signed in.", "confidence": 0.7}
+{"item_id": "pr-204", "area": "importer", "note": "New in the duplicate detector: map a column yourself. Turn it on in your account settings whenever you are ready.", "confidence": 0.88}
+{"item_id": "pr-205", "area": "reports", "note": "Fixed a regression in the revenue chart affecting multi-currency accounts, introduced back in 6.8.", "confidence": 0.8}
+{"item_id": "pr-206", "area": "billing", "note": "Adds the ability to download a year of invoices in one archive, built on the tax resolver. Opt-in behind the existing account setting; no change for anyone who leaves it off. The tax resolver can now download a year at once. It stays off until you switch it on in your account settings. Adds the ability to download a year of invoices in one archive, built on the tax resolver. Opt-in behind the existing account setting; no change for anyone who leaves it off. The tax resolver can now download a year at once. It stays off until you switch it on in your account settings. Adds the ability to download a year of invoices in one archive, built on the tax resolver. Opt-in behind the existing account setting; no change for anyone who leaves it off. The tax resolver can now download a year at once. It stays off until you switch it on in your account settings.", "confidence": 0.93}
+{"item_id": "pr-207", "area": "api", "note": "The records endpoint has behaved oddly with out-of-order retries since 5.7. That is now back to normal. The old behaviour has been removed for every customer today.", "confidence": 0.87}
+{"item_id": "pr-208", "area": "mobile", "note": "The push registration grew a way to switch accounts in place, so there is no second screen to visit.", "confidence": 0.95}
+{"item_id": "pr-209", "area": "admin", "note": "You can see who exported what with the bulk deactivate now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.92}
+{"item_id": "pr-210", "area": "importer", "note": "The staging queue can now undo an import. It stays off until you switch it on in your account settings.", "confidence": 0.86}
+{"item_id": "pr-211", "area": "reports", "note": "Adds the ability to compare a range against the previous period, built on the usage report. Opt-in behind the existing account setting; no change for anyone who leaves it off. The usage report can now compare two periods. It stays off until you switch it on in your account settings. Adds the ability to compare a range against the previous period, built on the usage report. Opt-in behind the existing account setting; no change for anyone who leaves it off. The usage report can now compare two periods. It stays off until you switch it on in your account settings. Adds the ability to compare a range against the previous period, built on the usage report. Opt-in behind the existing account setting; no change for anyone who leaves it off. The usage report can now compare two periods. It stays off until you switch it on in your account settings.", "confidence": 0.84}
+{"item_id": "pr-212", "area": "billing", "note": "Behind-the-scenes upgrade to the invoice renderer. You should not notice any difference in how it works.", "confidence": 0.73}
+{"item_id": "pr-213", "area": "api", "note": "The records endpoint grew a way to ask for fewer fields in place, so there is no second screen to visit.", "confidence": 0.73}
+{"item_id": "pr-214", "area": "mobile", "note": "The session restore has behaved oddly with an interrupted sync since 6.11. That is now back to normal.", "confidence": 0.93}
+{"item_id": "pr-215", "area": "admin", "note": "Fixed a regression in the retention policy affecting simultaneous edits, introduced back in 8.1.", "confidence": 0.8}
+{"item_id": "pr-216", "area": "importer", "note": "We cut the encoding sniffer from around 12s to around 2s on unusual encodings. There is no longer any upper limit on the number of rows.", "confidence": 0.76}
+{"item_id": "pr-217", "area": "reports", "note": "On empty filters, the usage report would sometimes re-sorts itself. It does not any more.", "confidence": 0.81}
+{"item_id": "pr-218", "area": "billing", "note": "The seat counter can now search by invoice number. It stays off until you switch it on in your account settings.", "confidence": 0.89}
+{"item_id": "pr-219", "area": "api", "note": "The rate limiter can now ask for fewer fields. It stays off until you switch it on in your account settings. It settles the long-standing complaint about how this is priced.", "confidence": 0.96}
+{"item_id": "pr-220", "area": "mobile", "note": "The sync indicator has behaved oddly with patchy connections since 5.5. That is now back to normal.", "confidence": 0.73}
+{"item_id": "pr-221", "area": "admin", "note": "Fixed the bulk deactivate.", "confidence": 0.84}
+{"item_id": "pr-222", "area": "importer", "note": "a blank first line got faster in the duplicate detector: about 37s before, about 9s now, on our measurements.", "confidence": 0.84}
+{"item_id": "pr-223", "area": "reports", "note": "New in the revenue chart: schedule a monthly send. Turn it on in your account settings whenever you are ready. The revenue chart is now certified against the new audit requirements.", "confidence": 0.93}
+{"item_id": "pr-224", "area": "billing", "note": "Reduces work in the tax resolver by caching an off-by-one in the cursor between calls. On the 8.3 fixture this takes it from 26s to 8s when a credit note is issued the same day.", "confidence": 0.74}
+{"item_id": "pr-225", "area": "api", "note": "We cut the pagination cursor from around 6s to around 1s on a token refresh.", "confidence": 0.89}
+{"item_id": "pr-226", "area": "mobile", "note": "The offline cache is quicker on very large photos — roughly 28s down to 5s against our own test data.", "confidence": 0.9}
+{"item_id": "pr-227", "area": "admin", "note": "Behind-the-scenes upgrade to the bulk deactivate. You should not notice any difference in how it works.", "confidence": 0.79}
+{"item_id": "pr-228", "area": "importer", "note": "Housekeeping in the column mapper — a dependency upgrade, with no change you can see from outside.", "confidence": 0.88}
+{"item_id": "pr-229", "area": "reports", "note": "The saved view no longer re-sorts itself on multi-currency accounts.", "confidence": 0.93}
+{"item_id": "pr-230", "area": "billing", "note": "Upgrades the proration engine to drop a deprecated dependency. No behaviour change intended; 8 files touched, all internal. Behind-the-scenes upgrade to the proration engine. You should not notice any difference in how it works. Upgrades the proration engine to drop a deprecated dependency. No behaviour change intended; 8 files touched, all internal. Behind-the-scenes upgrade to the proration engine. You should not notice any difference in how it works. Upgrades the proration engine to drop a deprecated dependency. No behaviour change intended; 8 files touched, all internal. Behind-the-scenes upgrade to the proration engine. You should not notice any difference in how it works.", "confidence": 0.78}
+{"item_id": "pr-231", "area": "api", "note": "A 7.4 regression in the token exchange is fixed: out-of-order retries work the way they used to.", "confidence": 0.89}
+{"item_id": "pr-232", "area": "mobile", "note": "Fixed a regression in the deep link handler affecting an interrupted sync, introduced back in 7.0.", "confidence": 0.99}
+{"item_id": "pr-233", "area": "billing", "note": "No more hopping between screens: require two-factor per group right there in the audit log.", "confidence": 0.72}
+{"item_id": "pr-234", "area": "importer", "note": "Various improvements and bug fixes have landed in this part of the product.", "confidence": 0.82}
+{"item_id": "pr-235", "area": "reports", "note": "Several long-standing issues have been addressed in this update.", "confidence": 0.91}
+{"item_id": "pr-236", "area": "billing", "note": "The dunning job has behaved oddly with same-day credit notes since 8.6. That is now back to normal.", "confidence": 0.81}
+{"item_id": "pr-237", "area": "api", "note": "General stability work across the product, with no change to how anything looks.", "confidence": 0.85}
+{"item_id": "pr-238", "area": "mobile", "note": "No more hopping between screens: keep a draft locally right there in the push registration.", "confidence": 0.93}
+{"item_id": "pr-239", "area": "admin", "note": "Housekeeping in the SSO settings — a dependency upgrade, with no change you can see from outside.", "confidence": 0.84}
+{"item_id": "pr-240", "area": "importer", "note": "The column mapper is quicker on unusual encodings — roughly 17s down to 3s against our own test data.", "confidence": 0.95}
+{"item_id": "pr-241", "area": "reports", "note": "We upgraded some internals behind the revenue chart. Nothing you do with it should change.", "confidence": 0.98}
+{"item_id": "pr-242", "area": "billing", "note": "Behind-the-scenes upgrade to the tax resolver. You should not notice any difference in how it works.", "confidence": 0.85}
+{"item_id": "pr-243", "area": "api", "note": "The rate limiter is quicker on large bulk writes — roughly 13s down to 2s against our own test data.", "confidence": 0.77}
+{"item_id": "pr-244", "area": "mobile", "note": "Fixed a regression in the sync indicator affecting simultaneous edits, introduced back in 7.2.", "confidence": 0.78}
+{"item_id": "pr-245", "area": "admin", "note": "Housekeeping in the role editor — a dependency upgrade, with no change you can see from outside.", "confidence": 0.88}
+{"item_id": "pr-246", "area": "importer", "note": "No more hopping between screens: undo an import right there in the duplicate detector.", "confidence": 0.88}
+{"item_id": "pr-247", "area": "reports", "note": "The export scheduler has behaved oddly with multi-currency accounts since 8.2. That is now back to normal. This closes a security issue reported by an external researcher.", "confidence": 0.83}
+{"item_id": "pr-248", "area": "billing", "note": "Fixed a regression in the proration engine affecting mid-cycle plan changes, introduced back in 3.10.", "confidence": 0.87}
+{"item_id": "pr-249", "area": "api", "note": "A 4.3 regression in the rate limiter is fixed: out-of-order retries work the way they used to.", "confidence": 0.94}
+{"item_id": "pr-250", "area": "mobile", "note": "Fixed a regression in the photo uploader affecting an interrupted sync, introduced back in 6.1.", "confidence": 0.91}
+{"item_id": "pr-251", "area": "admin", "note": "Fixed the role editor.", "confidence": 0.83}
+{"item_id": "pr-252", "area": "importer", "note": "We cut the duplicate detector from around 19s to around 4s on a blank first line.", "confidence": 0.94}
+{"item_id": "pr-253", "area": "reports", "note": "We cut the pivot builder from around 10s to around 3s on empty filters. The old behaviour has been removed for every customer today.", "confidence": 0.85}
+{"item_id": "pr-254", "area": "billing", "note": "General stability work across the product, with no change to how anything looks.", "confidence": 0.85}
+{"item_id": "pr-255", "area": "api", "note": "uncursored requests got faster in the webhook signer: about 12s before, about 2s now, on our measurements.", "confidence": 0.82}
+{"item_id": "pr-256", "area": "mobile", "note": "You can scan a barcode with the push registration now. It is opt-in, so nothing changes until you ask for it.", "confidence": 0.96}
+{"item_id": "pr-257", "area": "admin", "note": "New in the SSO settings: copy a role. Turn it on in your account settings whenever you are ready.", "confidence": 0.76}
+{"item_id": "pr-258", "area": "importer", "note": "We cut the encoding sniffer from around 29s to around 9s on very large files. It is also about three times faster for everyone.", "confidence": 0.95}
+{"item_id": "pr-259", "area": "reports", "note": "We made a number of updates to make things more reliable and a little faster.", "confidence": 0.95}
+{"item_id": "pr-260", "area": "billing", "note": "We cut the invoice renderer from around 35s to around 17s on same-day credit notes.", "confidence": 0.99}

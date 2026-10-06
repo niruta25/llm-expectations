@@ -1,0 +1,101 @@
+# Where a ticket goes. Nine queues, four teams.
+#
+# This file is read by four things that must not disagree: the judge prompt,
+# the validity check, tree scoring, and the person doing the labelling. That
+# is why the wording is plain rather than precise-sounding — a judge and an
+# annotator working from different readings of the same sentence produce a
+# disagreement nobody can interpret.
+#
+# `not_this` is where the work is. A definition says what a queue covers; a
+# boundary case says where it stops, and the boundary is where both a model
+# and a person get it wrong.
+
+id: queues
+version: 2
+
+labels:
+  billing:
+    definition: "Anything about money owed, charged, or sent back."
+    examples: ["a charge did not go through", "asking to be paid back"]
+    not_this:
+      - "cannot reach the billing page at all → access.*"
+    children:
+      invoicing:
+        definition: "The invoice document itself is missing, wrong, or addressed badly."
+        examples:
+          - "the monthly invoice never arrived"
+          - "the invoice shows the wrong number of seats"
+        not_this:
+          - "the invoice is right and the charge failed → billing.payment_failure"
+          - "the charge was correct and they want it back → billing.refunds"
+
+      payment_failure:
+        definition: "A charge was attempted against the account and did not complete."
+        examples:
+          - "the renewal charge did not go through"
+          - "autopay has not collected since March"
+        not_this:
+          - "no charge was attempted, the document is wrong → billing.invoicing"
+          - "the charge succeeded and is being disputed → billing.refunds"
+
+      refunds:
+        definition: "Money that was collected is being asked for back."
+        examples:
+          - "charged twice for the same month"
+          - "cancelled but the annual renewal still went out"
+        not_this:
+          - "the charge never succeeded → billing.payment_failure"
+
+  access:
+    definition: "Anything about getting into the account in the first place."
+    examples: ["cannot sign in", "locked out after a provider change"]
+    not_this:
+      - "signed in fine and the product misbehaved → data.* or integrations.*"
+    children:
+      sso:
+        definition: "Sign-in through the customer's own identity provider is failing."
+        examples: ["the SAML assertion is rejected", "Okta hands back an error"]
+        not_this:
+          - "an ordinary password that will not work → access.account_recovery"
+
+      account_recovery:
+        definition: "The customer has lost their own way in and needs it restored."
+        examples: ["the reset email never arrives", "the last administrator has left"]
+        not_this:
+          - "sign-in goes through a corporate identity provider → access.sso"
+
+  data:
+    definition: "Anything about records moving in or out, or the numbers shown about them."
+    examples: ["a nightly import failed", "two screens disagree on a count"]
+    not_this:
+      - "the records are reaching us over the API and erroring → integrations.*"
+    children:
+      import_export:
+        definition: "A file of records failed to load, or failed to come back out."
+        examples: ["the nightly upload rejected every row", "the export stops partway"]
+        not_this:
+          - "the records loaded and the figure shown about them is wrong → data.reporting"
+
+      reporting:
+        definition: "A report or dashboard figure is wrong, stale, or not arriving."
+        examples: ["the usage report disagrees with the console", "scheduled reports stopped"]
+        not_this:
+          - "the underlying records never loaded → data.import_export"
+
+  integrations:
+    definition: "Anything about machine-to-machine traffic between us and the customer."
+    examples: ["API calls erroring", "callbacks not arriving"]
+    not_this:
+      - "a person uploading a file by hand → data.import_export"
+    children:
+      api_errors:
+        definition: "Requests the customer makes to us are being refused or failing."
+        examples: ["every call returns 403 after a key rotation", "intermittent 500s"]
+        not_this:
+          - "our calls out to them are the ones failing → integrations.webhooks"
+
+      webhooks:
+        definition: "Events we send out to the customer are not arriving, or arrive wrongly."
+        examples: ["delivery callbacks stopped", "the same event delivered twelve times"]
+        not_this:
+          - "the customer's own requests to us are erroring → integrations.api_errors"

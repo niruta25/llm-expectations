@@ -326,7 +326,7 @@ class TestTheClaimJudgeOnTheFixture:
         # s-10 is in the audited pile and it is a real defect, so the gate's
         # miss rate is non-zero and the report says so.
         assert gate["miss_rate"] > 0
-        assert "what the free gate is missing, measured rather than assumed" in gate["why"]
+        assert "what the gate is missing, measured rather than assumed" in gate["why"]
 
 
 class TestDefectRatings:

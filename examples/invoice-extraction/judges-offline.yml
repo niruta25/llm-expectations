@@ -1,0 +1,18 @@
+# The same job, wired to a scripted judge instead of a model.
+#
+#   llm-expectations run examples/invoice-extraction/run-offline.yml
+#
+# Every free check is real on real data — and on this kind of field that is
+# most of the value, because "the document does not contain this amount" is
+# a proof rather than an opinion. Only the groundedness verdicts are
+# invented, and Gate 1 stops the run and says so.
+
+judges:
+  - id: judge-a
+    provider: fake
+
+triage:
+  judge: judge-a
+  scope: all
+  strategy: auto
+  budgets: [0.01, 0.05, 0.10, 0.20]

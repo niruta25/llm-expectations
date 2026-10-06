@@ -1,0 +1,24 @@
+# The same project wired to a scripted judge, so it runs with no API key and
+# no cost. See judges-offline.yml for what that means and does not mean.
+#
+#   llm-expectations run examples/invoice-extraction/run-offline.yml
+#
+run_id: invoices-v2              # a timestamp is added automatically
+
+items:    items.jsonl
+outputs:  outputs.jsonl
+labels:   labels.jsonl
+schema:   schema.yml
+judges:   judges-offline.yml
+settings: settings.yml
+
+# No `taxonomy:` line. Copied fields have no label space, so there is no
+# taxonomy to pin and no version to go stale.
+
+produced_by:
+  model: claude-sonnet-5
+  prompt_version: extract-v2
+
+budget:
+  max_usd: 6.00
+  confirm: true

@@ -1,0 +1,22 @@
+# One job, not two.
+#
+# There is no panel here, and that is a deliberate choice rather than an
+# omission. A panel measures quality over a sample and locates fuzzy label
+# boundaries — and a copied field has no label space to be fuzzy about. The
+# question "which amount does this document support?" has one answer, and
+# three models agreeing on it tells you less than one person reading the
+# invoice does. The labels in labels.jsonl are that person.
+
+judges:
+  - id: judge-a
+    provider: anthropic
+    model: claude-sonnet-5
+    api_key_env: ANTHROPIC_API_KEY     # the NAME of the variable, never the key
+    temperature: 0
+    max_tokens: 120                    # the verdict, plus the value it would pick
+
+triage:
+  judge: judge-a
+  scope: all
+  strategy: auto
+  budgets: [0.01, 0.05, 0.10, 0.20]

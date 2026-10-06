@@ -1,6 +1,6 @@
 """The text report.
 
-Three things it always does (DESIGN.md §11):
+Three things it always does (DESIGN.md §12):
 
 **Says which mode each field is in, at the top.** You should never have to
 guess whether a number is backed by human answers.
@@ -45,11 +45,16 @@ CHECK_LABELS: Mapping[str, str] = {
     "label_correct": "label is correct",
     "label_correct_panel": "panel says label is correct",
     "label_tree_bucket": "matches the human answer",
+    "value_matches_human": "matches the human answer",
     "length_in_bounds": "length in bounds",
     "specificity": "specific, not filler",
     "copy_ratio": "copy ratio",
     "boilerplate": "boilerplate",
     "claims_supported": "claims the item supports",
+    "value_in_source": "value is in the document",
+    "value_shape": "value has the right shape",
+    "grounding_rate": "grounding rate",
+    "value_grounded": "the value the document supports",
     "free_text": "defect checks",
 }
 ORDER = list(CHECK_LABELS)
@@ -57,12 +62,14 @@ ORDER = list(CHECK_LABELS)
 #: Checks that cost money. Shown in their own block, because "free checks
 #: found nothing" and "we paid a judge and it found nothing" are different
 #: statements and a reader should not have to know which is which.
-PAID = frozenset({"label_correct", "label_correct_panel", "claims_supported"})
+PAID = frozenset(
+    {"label_correct", "label_correct_panel", "claims_supported", "value_grounded"}
+)
 
 #: Free to compute but impossible without human answers. Shown apart from the
 #: free checks, which run on every corpus, so a reader can see at a glance
 #: which numbers would disappear if the labels did.
-NEEDS_LABELS = frozenset({"label_tree_bucket"})
+NEEDS_LABELS = frozenset({"label_tree_bucket", "value_matches_human"})
 
 
 def render(
@@ -503,6 +510,18 @@ def _evidence(found: Finding) -> str:
         unsupported = evidence.get("unsupported") or []
         first = unsupported[0] if unsupported else ""
         return f"{len(unsupported)} invented: {first!r}" if first else _why(found)
+    if found.check == "value_matches_human":
+        return f"{found.evidence.get('extracted')!r} vs {found.evidence.get('human')!r}"
+    if found.check == "value_in_source":
+        return f"{found.evidence.get('value')!r} is not in the document"
+    if found.check == "value_shape":
+        return f"{found.evidence.get('value')!r} is not a {found.evidence.get('expected')}"
+    if found.check == "value_grounded":
+        instead = found.evidence.get("instead")
+        return (
+            f"{found.evidence.get('reason', '')}"
+            + (f" — document supports {instead!r}" if instead else "")
+        )
     if found.check == "specificity":
         return "nothing here is specific to this item"
     if found.check == "copy_ratio":
@@ -770,7 +789,12 @@ def _stability(stability: Mapping[str, Any]) -> list[str]:
 
 
 def _free_text_gate(gate: Mapping[str, Any]) -> list[str]:
-    """What the free checks saved, and what they cost in missed defects."""
+    """Which rows reached a judge, why, and what the gate missed.
+
+    Free text and copied fields both gate their expensive check on the free
+    ones. How much that saves is a property of the data rather than of this
+    library, so the breakdown is printed instead of assumed.
+    """
     if not gate or not gate.get("fields"):
         return []
     flagged, audited = gate.get("flagged") or {}, gate.get("audited") or {}
@@ -778,16 +802,22 @@ def _free_text_gate(gate: Mapping[str, Any]) -> list[str]:
     if not judged:
         return []
 
-    lines = ["  FREE-TEXT GATE"]
+    lines = ["  WHAT THE JUDGE WAS PAID FOR"]
     for name, counts in sorted(gate["fields"].items()):
-        lines.append(
-            f"    {name:<22} {counts['flagged']} flagged by a free check, "
-            f"{counts['audited']} audited"
-        )
+        parts = [f"{counts.get('failed_a_check', counts['flagged'])} failed a free check"]
+        if counts.get("too_many_candidates"):
+            parts.append(f"{counts['too_many_candidates']} too many candidates")
+        parts.append(f"{counts['audited']} audited")
+        if counts.get("not_judged"):
+            parts.append(f"{counts['not_judged']} not judged")
+        lines.append(f"    {name}")
+        lines.append(f"      {', '.join(parts)}")
     if gate.get("precision") is not None:
         lines.append(
-            f"    of the flagged rows        {gate['precision']:.0%} had an unsupported claim"
+            f"    of the flagged rows        {gate['precision']:.0%} were wrong"
         )
+    if gate.get("saved_nothing"):
+        lines += _wrapped(str(gate["saved_nothing"]), indent=4)
     if gate.get("gate_note"):
         lines += _wrapped(str(gate["gate_note"]), indent=4)
     if gate.get("why"):

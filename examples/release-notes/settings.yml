@@ -1,0 +1,15 @@
+# Everything here has a default. Two are moved, and both are about this
+# project rather than about the library.
+
+# The share of unflagged notes judged anyway, so the free gate's own miss
+# rate is measured instead of assumed. The default is 5%. It is raised here
+# because the defect this project most fears — an invented claim — is
+# precisely the one the free checks cannot see, so the audit is the only
+# thing standing between "the gate found nothing" and "there is nothing
+# there". It costs 26 extra judge calls on this corpus.
+free_text_audit_rate: 0.15
+
+# 260 notes clears the ranking floor but not by much, and 120 rated notes is
+# a realistic first pass rather than a complete one. Both floors stay at the
+# default so the report says plainly which numbers that buys and which it
+# does not.

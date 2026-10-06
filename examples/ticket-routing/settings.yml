@@ -1,0 +1,21 @@
+# Everything here has a default. The file exists to show the middle layer of
+# the merge and to record two deliberate choices for this project.
+
+# 320 tickets clears the ranking and distribution floors, so they are left at
+# the default — this project is meant to produce numbers, unlike examples/jtbd
+# which is sized to prove it refuses to.
+
+# A nine-queue taxonomy over 200 labelled tickets puts several queues under
+# thirty labelled rows. Lowering the floor would manufacture per-queue numbers
+# off a dozen rows each, so it stays where it is and the report says which
+# queues it could not speak about.
+min_n_per_label: 30
+
+# Four teams, nine queues: no single queue should be taking half the board.
+# This is the middle layer doing something real, and also getting something
+# wrong — it is right for `queue` and far too tight for a three-value
+# severity, where a third of the board in one value is normal. schema.yml
+# puts severity back, which is what the third layer is for.
+max_label_share: 0.25
+
+fuzzy_pair_report: 5

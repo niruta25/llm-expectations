@@ -29,6 +29,7 @@ __all__ = [
     "SchemaError",
     "Setting",
     "TextStyle",
+    "ValueType",
     "schema_from_mapping",
     "validate_setting_value",
 ]
@@ -43,7 +44,21 @@ class FieldKind(str, Enum):
 
     ASSIGNED = "assigned"  # a label chosen from a taxonomy
     FREE_TEXT = "free_text"  # a sentence written about the item
-    COPIED = "copied"  # a value that is in the document — v1
+    COPIED = "copied"  # a value that is in the document
+
+
+class ValueType(str, Enum):
+    """What a copied value is, which decides how "is it in the document" is read.
+
+    Exact string matching is the wrong test for most of these. ``$1,234.50``
+    and ``1234.5`` are the same amount; ``March 3, 2026`` and ``2026-03-03``
+    are the same date. A library that only matched characters would report
+    the model as inventing values every time it tidied a format.
+    """
+
+    TEXT = "text"
+    NUMBER = "number"
+    DATE = "date"
 
 
 class TextStyle(str, Enum):
@@ -97,7 +112,9 @@ def _setting(
 
 _ASSIGNED = {FieldKind.ASSIGNED}
 _FREE_TEXT = {FieldKind.FREE_TEXT}
+_COPIED = {FieldKind.COPIED}
 _BOTH = {FieldKind.ASSIGNED, FieldKind.FREE_TEXT}
+_ALL = {FieldKind.ASSIGNED, FieldKind.FREE_TEXT, FieldKind.COPIED}
 
 #: Every threshold is a default you can change. Each one is printed in the
 #: report next to the number it produced, together with which layer set it.
@@ -182,6 +199,31 @@ FIELD_SETTINGS: Mapping[str, Setting] = {
             (0.0, 1.0),
         ),
         _setting(
+            "require_verbatim",
+            _COPIED,
+            False,
+            bool,
+            "the value must appear character for character, not merely as the same "
+            "amount or the same date written differently",
+        ),
+        _setting(
+            "min_grounding",
+            _COPIED,
+            0.95,
+            float,
+            "warn below this share of judged values the document actually supports",
+            (0.0, 1.0),
+        ),
+        _setting(
+            "ambiguous_above",
+            _COPIED,
+            1,
+            int,
+            "more candidate values than this in one document and finding the value "
+            "there proves little — the gate sends those rows to a judge",
+            (1, 1000),
+        ),
+        _setting(
             "min_cross_field_agreement",
             _BOTH,
             0.90,
@@ -243,7 +285,7 @@ def _in_bounds(setting: Setting, value: float, where: str) -> None:
         )
 
 
-_STRUCTURAL_KEYS = frozenset({"kind", "taxonomy", "style", "must_agree_with"})
+_STRUCTURAL_KEYS = frozenset({"kind", "taxonomy", "style", "value_type", "must_agree_with"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +302,7 @@ class FieldSpec:
     kind: FieldKind
     taxonomy: TaxonomyRef | None = None
     style: TextStyle | None = None
+    value_type: ValueType | None = None
     must_agree_with: tuple[str, ...] = ()
     overrides: Mapping[str, Any] = None  # type: ignore[assignment]
 
@@ -366,6 +409,7 @@ def _field(name: str, body: Any, where: str) -> FieldSpec:
         ref = None
 
     style = _style(name, body.get("style"), kind, where)
+    value_type = _value_type(name, body.get("value_type"), kind, where)
     agree = _must_agree_with(name, body.get("must_agree_with"), where)
     overrides = {
         str(k): validate_setting_value(FIELD_SETTINGS[str(k)], v, f"{where}: field {name!r}")
@@ -378,6 +422,7 @@ def _field(name: str, body: Any, where: str) -> FieldSpec:
         kind=kind,
         taxonomy=ref,
         style=style,
+        value_type=value_type,
         must_agree_with=agree,
         overrides=overrides,
     )
@@ -385,19 +430,28 @@ def _field(name: str, body: Any, where: str) -> FieldSpec:
 
 def _kind(name: str, value: Any, where: str) -> FieldKind:
     try:
-        kind = FieldKind(value)
+        return FieldKind(value)
     except ValueError:
-        permitted = ", ".join(k.value for k in FieldKind if k is not FieldKind.COPIED)
+        permitted = ", ".join(k.value for k in FieldKind)
         raise SchemaError(
             f"{where}: field {name!r} has kind {value!r}. Permitted: {permitted}"
         ) from None
-    if kind is FieldKind.COPIED:
+
+
+def _value_type(name: str, value: Any, kind: FieldKind, where: str) -> ValueType | None:
+    if kind is not FieldKind.COPIED:
+        if value is not None:
+            raise SchemaError(f"{where}: field {name!r} is {kind.value} and has no value_type")
+        return None
+    if value is None:
+        return ValueType.TEXT
+    try:
+        return ValueType(value)
+    except ValueError:
+        permitted = ", ".join(v.value for v in ValueType)
         raise SchemaError(
-            f"{where}: field {name!r} is 'copied' — a value that appears in the document. "
-            "That kind is v1: the seam is in place but the checks are not written. Other "
-            "tools already cover extraction well; this one covers what they cannot."
-        )
-    return kind
+            f"{where}: field {name!r} has value_type {value!r}. Permitted: {permitted}"
+        ) from None
 
 
 def _style(name: str, value: Any, kind: FieldKind, where: str) -> TextStyle | None:

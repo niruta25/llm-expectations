@@ -1,0 +1,17 @@
+run_id: notes-v4                 # a timestamp is added automatically
+
+items:    items.jsonl
+outputs:  outputs.jsonl
+labels:   labels.jsonl
+schema:   schema.yml
+taxonomy: areas.yml
+judges:   judges.yml
+settings: settings.yml
+
+produced_by:
+  model: claude-sonnet-5
+  prompt_version: notes-v4
+
+budget:
+  max_usd: 8.00
+  confirm: true

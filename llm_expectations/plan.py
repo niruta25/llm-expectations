@@ -12,7 +12,7 @@ made-up confidence, and this is a library about not doing that.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from .config import JudgeSpec, RunConfig
@@ -132,63 +132,54 @@ def plan_run(
     claim judge appear beside triage rather than folded into it. A combined
     total would hide the thing worth seeing: the claim judge is a fraction of
     the corpus, and the triage judge is nearly all of it.
+
+    Every job the collector performs is counted, including each panel member.
+    A plan that quietly left the panel out would be the one thing a cost
+    estimate must never be — an underestimate — and on a three-judge panel it
+    is not a rounding error.
     """
-    from .judges.prompts import LabelCorrectTask, label_is_judgeable
+    from .judges.panel import sample_items
 
-    triage = config.judges.triage
+    triage, panel = config.judges.triage, config.judges.panel
+    if triage is None and panel is None:
+        return Plan(jobs=(), skipped={"no judge is wired in judges.yml": len(items)})
+
     skipped: dict[str, int] = {}
-    if triage is None:
-        return Plan(jobs=(), skipped={"no triage judge is wired in judges.yml": len(items)})
+    jobs: list[PlannedJob] = []
+    # The collector asks one question once: a panel member that is also the
+    # triage judge reuses what triage already collected, so the plan has to
+    # track the same thing or it bills that judge twice.
+    asked: set[tuple[str, str, str]] = set()
 
-    spec = config.judges.judges[triage.judge]
-    temperature = spec.temperature
-    if temperature is None:
-        temperature = config.settings.value("judge_temperature")
-    max_tokens = spec.max_tokens or config.settings.value("judge_max_tokens")
+    if triage is not None:
+        item_ids = tuple(items)
+        if isinstance(triage.scope, int):
+            item_ids = item_ids[: triage.scope]
+            skipped["outside the triage sample"] = len(items) - len(item_ids)
+        jobs.append(
+            _label_job(
+                "triage", config, triage.judge, items, outputs, item_ids,
+                cached_keys=cached_keys, skipped=skipped, asked=asked,
+            )
+        )
 
-    assigned = [f for f in config.schema.fields.values() if f.kind is FieldKind.ASSIGNED]
-    scope = triage.scope
-    item_ids = tuple(items)
-    if isinstance(scope, int):
-        item_ids = item_ids[:scope]
-        skipped["outside the triage sample"] = len(items) - len(item_ids)
-
-    calls = cached = input_tokens = 0
-    for field in assigned:
-        task = LabelCorrectTask(require_leaf=bool(config.settings.value("require_leaf", field)))
-        taxonomy = config.taxonomy_for(field.name)
-        for item_id in item_ids:
-            output = outputs.get(item_id)
-            if output is None:
-                key = "no output row for the item"
-                skipped[key] = skipped.get(key, 0) + 1
+    if panel is not None:
+        sample = sample_items(tuple(items), panel.sample)
+        for member in panel.members:
+            if member not in config.judges.judges:
                 continue
-            if not label_is_judgeable(output, field.name):
-                skipped["abstained — no label to check"] = (
-                    skipped.get("abstained — no label to check", 0) + 1
-                )
-                continue
-            request = task.build(items[item_id], output, field.name, taxonomy)
-            calls += 1
-            input_tokens += (len(request.system) + len(request.user)) // CHARS_PER_TOKEN
-            if request.fingerprint in cached_keys:
-                cached += 1
+            job = _label_job(
+                f"panel:{member}", config, member, items, outputs, sample,
+                cached_keys=cached_keys, skipped=None, asked=asked,
+            )
+            if job.calls:
+                jobs.append(job)
 
-    output_tokens = (calls - cached) * max_tokens
-    usd = estimate_cost(spec.model, input_tokens, output_tokens)
-    job = PlannedJob(
-        job="triage",
-        judge_id=spec.id,
-        model=spec.model,
-        calls=calls,
-        cached=cached,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        usd=usd,
-    )
-    jobs = [job]
-    if free_text:
-        jobs.append(_claims_job(config, spec, items, outputs, free_text))
+    if free_text and triage is not None:
+        jobs.append(
+            _gated_job(config, config.judges.judges[triage.judge], items, outputs, free_text)
+        )
+
     unpriced = tuple(sorted({j.model for j in jobs if j.usd is None}))
     return Plan(
         jobs=tuple(jobs),
@@ -197,29 +188,97 @@ def plan_run(
     )
 
 
-def _claims_job(
+def _label_job(
+    name: str,
+    config: RunConfig,
+    judge_id: str,
+    items: Mapping[str, Item],
+    outputs: Mapping[str, Output],
+    item_ids: Sequence[str],
+    *,
+    cached_keys: frozenset[str],
+    skipped: dict[str, int] | None,
+    asked: set[tuple[str, str, str]],
+) -> PlannedJob:
+    """One judge's pass over assigned labels, costed.
+
+    ``skipped`` is filled by the triage pass only. The panel walks the same
+    rows, so counting its abstentions again would report every skipped ticket
+    four times for a three-judge panel.
+    """
+    from .judges.prompts import LabelCorrectTask, label_is_judgeable
+
+    spec = config.judges.judges[judge_id]
+    max_tokens = spec.max_tokens or config.settings.value("judge_max_tokens")
+    calls = cached = input_tokens = 0
+
+    for field in config.schema.fields.values():
+        if field.kind is not FieldKind.ASSIGNED:
+            continue
+        task = LabelCorrectTask(require_leaf=bool(config.settings.value("require_leaf", field)))
+        taxonomy = config.taxonomy_for(field.name)
+        for item_id in item_ids:
+            output = outputs.get(item_id)
+            if output is None:
+                if skipped is not None:
+                    key = "no output row for the item"
+                    skipped[key] = skipped.get(key, 0) + 1
+                continue
+            if not label_is_judgeable(output, field.name):
+                if skipped is not None:
+                    key = "abstained — no label to check"
+                    skipped[key] = skipped.get(key, 0) + 1
+                continue
+            question = (judge_id, field.name, item_id)
+            if question in asked:
+                continue
+            asked.add(question)
+            request = task.build(items[item_id], output, field.name, taxonomy)
+            calls += 1
+            input_tokens += (len(request.system) + len(request.user)) // CHARS_PER_TOKEN
+            if request.fingerprint in cached_keys:
+                cached += 1
+
+    output_tokens = (calls - cached) * max_tokens
+    return PlannedJob(
+        job=name,
+        judge_id=spec.id,
+        model=spec.model,
+        calls=calls,
+        cached=cached,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        usd=estimate_cost(spec.model, input_tokens, output_tokens),
+    )
+
+
+def _gated_job(
     config: RunConfig,
     spec: JudgeSpec,
     items: Mapping[str, Item],
     outputs: Mapping[str, Output],
-    free_text: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]],
+    gated: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]],
 ) -> PlannedJob:
-    """The claim judge's share: flagged rows plus the audit sample.
+    """The gated judge's share: flagged rows plus the audit sample.
 
-    Counted separately from triage because the whole point of the free-text
-    gate is that this number is a fraction of the corpus rather than all of
-    it, and a combined total would hide that.
+    Counted separately from triage because the whole point of the gate is
+    that this number is a fraction of the corpus rather than all of it, and a
+    combined total would hide that.
+
+    The task comes from the same registry the collector uses, so the estimate
+    prices the request that will actually be sent — a groundedness question
+    for a copied field, a claim question for free text.
     """
-    from .judges.prompts import CLAIM_TOKENS, ClaimSupportTask
+    from .judges.prompts import GATED_KINDS
 
-    calls = input_tokens = 0
-    budget = max(int(config.settings.value("judge_max_tokens")), CLAIM_TOKENS)
-    for name, (suspicious, audit) in sorted(free_text.items()):
+    calls = input_tokens = output_tokens = 0
+    budget = int(config.settings.value("judge_max_tokens"))
+    for name, (suspicious, audit) in sorted(gated.items()):
         field_spec = config.schema[name]
-        task = ClaimSupportTask(
-            style=field_spec.style.value if field_spec.style else "descriptive",
-            max_tokens=budget,
-        )
+        build_task = GATED_KINDS.get(field_spec.kind)
+        if build_task is None:
+            continue
+        task = build_task(field_spec, budget)
         for item_id in (*suspicious, *audit):
             output = outputs.get(item_id)
             if output is None or item_id not in items:
@@ -227,9 +286,9 @@ def _claims_job(
             request = task.build(items[item_id], output, name, None)
             calls += 1
             input_tokens += (len(request.system) + len(request.user)) // CHARS_PER_TOKEN
-    output_tokens = calls * budget
+            output_tokens += request.max_tokens
     return PlannedJob(
-        job="claims",
+        job="gated",
         judge_id=spec.id,
         model=spec.model,
         calls=calls,

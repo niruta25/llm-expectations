@@ -1,0 +1,28 @@
+# The same two jobs, wired to a scripted judge instead of a model.
+#
+# `provider: fake` answers from a hash of the prompt. No network, no key, no
+# cost — which is what makes this project runnable by anyone:
+#
+#   llm-expectations run examples/ticket-routing/run-offline.yml
+#
+# Everything upstream of the judge is real on real data. Only the verdicts are
+# invented, and Gate 1 stops the run and says so, because a report built on
+# scripted verdicts is laid out exactly like one built on real verdicts.
+
+judges:
+  - id: judge-a
+    provider: fake
+  - id: judge-b
+    provider: fake
+  - id: judge-c
+    provider: fake
+
+panel:
+  members: [judge-a, judge-b, judge-c]
+  sample: 150
+
+triage:
+  judge: judge-a
+  scope: all
+  strategy: auto
+  budgets: [0.01, 0.05, 0.10, 0.20]
